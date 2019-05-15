@@ -258,7 +258,7 @@
  *  - OBS_TRANSFORM_TYPE_MAX    - Maximum value in buffer
  *  - OBS_TRANSFORM_TYPE_MIN    - Minimum value in buffer
  *
- * The optional parameters are dependent upon the transform being applied - e.g. Tap coefficients 
+ * The optional parameters are dependent upon the transform being applied - e.g. Tap coefficients
  * for Z-transforms, such as IIR or FIR filtering.  Currently unused
  *
  * The Following function can be used to retrieve the transform type:
@@ -961,10 +961,10 @@ FUNCTION double GetChangeBy
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Perform a transform on an observation's buffered data. Value of the observation will be  
- * the output of the transform 
- * 
- * Ignored for all non-numeric types except Boolean for which non-zero = true and zero = false. 
+ * Perform a transform on an observation's buffered data. Value of the observation will be
+ * the output of the transform
+ *
+ * Ignored for all non-numeric types except Boolean for which non-zero = true and zero = false.
  */
 //--------------------------------------------------------------------------------------------------
 FUNCTION SetTransform

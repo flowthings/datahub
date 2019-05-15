@@ -702,7 +702,7 @@ static void PrintTransformSetting
 )
 //--------------------------------------------------------------------------------------------------
 {
-    const char *transformNameStr[] = 
+    const char *transformNameStr[] =
     {
         "none (0)",
         "mean (1)",

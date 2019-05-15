@@ -21,7 +21,8 @@ typedef struct psensor
     bool isEnabled;
     double period;  ///< seconds (0.0 = not set yet)
     le_timer_Ref_t timer;
-    void (*sampleFunc)(psensor_Ref_t);
+    void (*sampleFunc)(psensor_Ref_t, void *);
+    void *sampleFuncContext;
     char name[PSENSOR_MAX_NAME_BYTES];
 
     dhubIO_TriggerPushHandlerRef_t triggerHandlerRef;
@@ -44,7 +45,7 @@ static void HandleTimerExpiry
 {
     Sensor_t* sensorPtr = le_timer_GetContextPtr(timer);
 
-    sensorPtr->sampleFunc(sensorPtr);
+    sensorPtr->sampleFunc(sensorPtr, sensorPtr->sampleFuncContext);
 }
 
 
@@ -156,7 +157,7 @@ static void HandleTriggerPush
 
     if (sensorPtr->isEnabled)
     {
-        sensorPtr->sampleFunc(sensorPtr);
+        sensorPtr->sampleFunc(sensorPtr, sensorPtr->sampleFuncContext);
     }
 }
 
@@ -177,7 +178,9 @@ psensor_Ref_t psensor_Create
     const char* name,   ///< Name of the periodic sensor.
     dhubIO_DataType_t dataType,
     const char* units,
-    void (*sampleFunc)(psensor_Ref_t ref) ///< Sample function to be called back periodically.
+    void (*sampleFunc)(psensor_Ref_t ref,
+                       void *context), ///< Sample function to be called back periodically.
+    void *sampleFuncContext  ///< Context pointer to be passed to the sample function
 )
 //--------------------------------------------------------------------------------------------------
 {
@@ -194,13 +197,14 @@ psensor_Ref_t psensor_Create
     le_timer_SetContextPtr(sensorPtr->timer, sensorPtr);
 
     sensorPtr->sampleFunc = sampleFunc;
+    sensorPtr->sampleFuncContext = sampleFuncContext;
 
     if (le_utf8_Copy(sensorPtr->name, name, sizeof(sensorPtr->name), NULL) != LE_OK)
     {
         LE_FATAL("Sensor name too long (%s)", name);
     }
 
-    // Create the Data Hub resources "value", "enable", and "period" for this sensor.
+    // Create the Data Hub resources "value", "enable", "period", and "trigger" for this sensor.
     char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
     LE_ASSERT(snprintf(path, sizeof(path), "%s/value", name) < sizeof(path));
     le_result_t result = dhubIO_CreateInput(path, dataType, units);

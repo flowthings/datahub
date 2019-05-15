@@ -479,6 +479,8 @@ static ssize_t WriteToFd
 {
     ssize_t result;
 
+    LE_ASSERT(buffPtr != NULL);
+
     do
     {
         result = write(fd, buffPtr, byteCount);
@@ -503,8 +505,8 @@ static void ContinueReadOp
     ssize_t result;
     for (;;)
     {
-        const char* writeBuffPtr;
-        size_t writeLen;
+        const char* writeBuffPtr = NULL;
+        size_t writeLen = 0;
 
         // Figure out what to write based on the state.
         switch (opPtr->state)
@@ -1560,7 +1562,7 @@ bool obs_ShouldAccept
             && (!isnan(obsPtr->lowLimit))
             && (obsPtr->lowLimit > obsPtr->highLimit)  )
         {
-            if ((numericValue > obsPtr->lowLimit) || (numericValue < obsPtr->highLimit))
+            if ((numericValue < obsPtr->lowLimit) && (numericValue > obsPtr->highLimit))
             {
                 return false;
             }
@@ -1931,18 +1933,18 @@ double obs_GetChangeBy
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Perform a transform on buffered data. Value of the observation will be the output of the 
- * transform 
- * 
- * Ignored for all non-numeric types except Boolean for which non-zero = true and zero = false. 
+ * Perform a transform on buffered data. Value of the observation will be the output of the
+ * transform
+ *
+ * Ignored for all non-numeric types except Boolean for which non-zero = true and zero = false.
  */
 //--------------------------------------------------------------------------------------------------
 void obs_SetTransform
 (
     res_Resource_t* resPtr,
     obs_TransformType_t transformType,
-    const double* paramsPtr,                                                                                                                                                                                        
-    size_t paramsSize                                                                                                                                                                                               
+    const double* paramsPtr,
+    size_t paramsSize
 )
 //--------------------------------------------------------------------------------------------------
 {
@@ -1967,8 +1969,8 @@ void obs_SetTransform
         resPtr->pushedValue = NULL;
     }
 
-    (void)paramsPtr;                                                                                                                                                                                        
-    (void)paramsSize;                                                                                                                                                                                               
+    (void)paramsPtr;
+    (void)paramsSize;
 }
 
 

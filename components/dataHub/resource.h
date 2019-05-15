@@ -446,10 +446,10 @@ double res_GetChangeBy
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Perform a transform on buffered data. Value of the observation will be the output of the 
- * transform 
- * 
- * Ignored for all non-numeric types except Boolean for which non-zero = true and zero = false. 
+ * Perform a transform on buffered data. Value of the observation will be the output of the
+ * transform
+ *
+ * Ignored for all non-numeric types except Boolean for which non-zero = true and zero = false.
  */
 //--------------------------------------------------------------------------------------------------
 void res_SetTransform
