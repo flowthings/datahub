@@ -187,6 +187,10 @@ void ioPoint_DoTypeCoercion
 
     double timestamp = dataSample_GetTimestamp(fromSample);
 
+    bool bool_value;
+    double double_value;
+    const char* char_value;
+
     switch (toType)
     {
         case IO_DATA_TYPE_TRIGGER:
@@ -210,18 +214,18 @@ void ioPoint_DoTypeCoercion
                     break;  // No conversion required.
 
                 case IO_DATA_TYPE_NUMERIC:
-                    double value = dataSample_GetNumeric(fromSample);
-                    toSample = dataSample_CreateBoolean(timestamp, (value != 0));
+                    double_value = dataSample_GetNumeric(fromSample);
+                    toSample = dataSample_CreateBoolean(timestamp, (double_value != 0));
                     break;
 
                 case IO_DATA_TYPE_STRING:
-                    const char* value = dataSample_GetString(fromSample);
-                    toSample = dataSample_CreateBoolean(timestamp, (value[0] != '\0'));
+                    char_value = dataSample_GetString(fromSample);
+                    toSample = dataSample_CreateBoolean(timestamp, (char_value[0] != '\0'));
                     break;
 
                 case IO_DATA_TYPE_JSON:
-                    bool newValue = json_ConvertToBoolean(dataSample_GetJson(fromSample));
-                    toSample = dataSample_CreateBoolean(timestamp, newValue);
+                    bool_value = json_ConvertToBoolean(dataSample_GetJson(fromSample));
+                    toSample = dataSample_CreateBoolean(timestamp, bool_value);
                     break;
             }
             break;
@@ -234,21 +238,21 @@ void ioPoint_DoTypeCoercion
                     break;
 
                 case IO_DATA_TYPE_BOOLEAN:
-                    double newValue = (dataSample_GetBoolean(fromSample) ? 1 : 0);
-                    toSample = dataSample_CreateNumeric(timestamp, newValue);
+                    double_value = (dataSample_GetBoolean(fromSample) ? 1 : 0);
+                    toSample = dataSample_CreateNumeric(timestamp, double_value);
                     break;
 
                 case IO_DATA_TYPE_NUMERIC:
                     break;  // No conversion required.
 
                 case IO_DATA_TYPE_STRING:
-                    double newValue = (dataSample_GetString(fromSample)[0] == '\0' ? 0 : 1);
-                    toSample = dataSample_CreateNumeric(timestamp, newValue);
+                    double_value = (dataSample_GetString(fromSample)[0] == '\0' ? 0 : 1);
+                    toSample = dataSample_CreateNumeric(timestamp, double_value);
                     break;
 
                 case IO_DATA_TYPE_JSON:
-                    double newValue = json_ConvertToNumber(dataSample_GetJson(fromSample));
-                    toSample = dataSample_CreateNumeric(timestamp, newValue);
+                    double_value = json_ConvertToNumber(dataSample_GetJson(fromSample));
+                    toSample = dataSample_CreateNumeric(timestamp, double_value);
                     break;
             }
             break;

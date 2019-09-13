@@ -59,6 +59,129 @@ static le_mem_PoolRef_t SmallStringSamplePool = NULL;
 ///       results in massive unnecessary memory consumption (internal fragmentation).
 static le_mem_PoolRef_t HugeStringSamplePool = NULL;
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * PRELIMINARY NOTE :
+ * ------------------
+ * This function is similar to le_utf8_Copy. The main difference is that the double quotes are
+ * escaped to produce a valid JSON file.
+ *
+ * This function copies the string in srcStr to the start of destStr and returns the number of bytes
+ * copied (not including the NULL-terminator) in numBytesPtr.  Null can be passed into numBytesPtr
+ * if the number of bytes copied is not needed.  The srcStr must be in UTF-8 format.
+ *
+ * If the size of srcStr is less than or equal to the destination buffer size then the entire srcStr
+ * will be copied including the null-character.  The rest of the destination buffer is not modified.
+ *
+ * If the size of srcStr is larger than the destination buffer then the maximum number of characters
+ * (from srcStr) plus a null-character that will fit in the destination buffer is copied.
+ *
+ * UTF-8 characters may be more than one byte long and this function will only copy whole characters
+ * not partial characters.  Therefore, even if srcStr is larger than the destination buffer the
+ * copied characters may not fill the entire destination buffer because the last character copied
+ * may not align exactly with the end of the destination buffer.
+ *
+ * The destination string will always be Null-terminated, unless destSize is zero.
+ *
+ * If destStr and srcStr overlap the behaviour of this function is undefined.
+ *
+ * @return
+ *      - LE_OK if srcStr was completely copied to the destStr.
+ *      - LE_OVERFLOW if srcStr was truncated when it was copied to destStr.
+ */
+//--------------------------------------------------------------------------------------------------
+le_result_t dataSample_StringToJson
+(
+    char* destStr,          ///< [IN] The destination where the srcStr is to be copied.
+    const char* srcStr,     ///< [IN] The UTF-8 source string.
+    const size_t destSize,  ///< [IN] Size of the destination buffer in bytes.
+    size_t* numBytesPtr     ///< [OUT] The number of bytes copied not including the NULL-terminator.
+                            ///        This parameter can be set to NULL if the number of bytes
+                            ///        copied is not needed.
+)
+{
+    // Check parameters.
+    LE_ASSERT( (destStr != NULL) && (srcStr != NULL) && (destSize > 0) );
+
+    // Go through the string copying one character at a time.
+    size_t i = 0, j = 0;
+    while (1)
+    {
+        if (srcStr[i] == '\0')
+        {
+            // NULL character found.  Complete the copy and return.
+            destStr[j] = '\0';
+
+            if (numBytesPtr)
+            {
+                *numBytesPtr = j;
+            }
+
+            return LE_OK;
+        }
+        else if (srcStr[i] == '\"')
+        {
+            // Need to escape the double quote
+            if (2 + i >= destSize)
+            {
+                // This character will not fit in the available space so stop.
+                destStr[j] = '\0';
+
+                if (numBytesPtr)
+                {
+                    *numBytesPtr = j;
+                }
+
+                return LE_OVERFLOW;
+            }
+
+            destStr[j] = '\\';
+            j++;
+            destStr[j] = '\"';
+            i++;
+            j++;
+        }
+        else
+        {
+            size_t charLength = le_utf8_NumBytesInChar(srcStr[i]);
+
+            if (charLength == 0)
+            {
+                // This is an error in the string format.  Zero out the destStr and return.
+                destStr[0] = '\0';
+
+                if (numBytesPtr)
+                {
+                    *numBytesPtr = 0;
+                }
+
+                return LE_OK;
+            }
+            else if (charLength + i >= destSize)
+            {
+                // This character will not fit in the available space so stop.
+                destStr[j] = '\0';
+
+                if (numBytesPtr)
+                {
+                    *numBytesPtr = j;
+                }
+
+                return LE_OVERFLOW;
+            }
+            else
+            {
+                // Copy the character.
+                for (; charLength > 0; charLength--)
+                {
+                    destStr[j] = srcStr[i];
+                    i++;
+                    j++;
+                }
+            }
+        }
+    }
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -457,7 +580,7 @@ const le_result_t dataSample_ConvertToJson
             valueBuffPtr[0] = '"';
             valueBuffPtr++;
             valueBuffSize--;
-            result = le_utf8_Copy(valueBuffPtr, sampleRef->value.string, valueBuffSize, &len);
+            result = dataSample_StringToJson(valueBuffPtr, sampleRef->value.string, valueBuffSize, &len);
             if ((result != LE_OK) || (len >= (valueBuffSize - 1)))  // need 1 more for the last '"'
             {
                 return LE_OVERFLOW;
