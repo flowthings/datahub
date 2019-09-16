@@ -63,8 +63,14 @@ static le_mem_PoolRef_t HugeStringSamplePool = NULL;
 /**
  * PRELIMINARY NOTE :
  * ------------------
- * This function is similar to le_utf8_Copy. The main difference is that the double quotes are
- * escaped to produce a valid JSON file.
+ * This function is similar to le_utf8_Copy. The main difference is that characters that need to
+ * be escaped are escaped to produce a valid JSON file.
+ *
+ * A JSON string begins and ends with quotation marks.  All Unicode characters may be placed within
+ * the quotation marks, except for the characters that must be escaped:
+ * quotation mark, reverse solidus, and the control characters (U+0000 through U+001F)
+ *
+ * Source : https://tools.ietf.org/html/rfc7159#section-7
  *
  * This function copies the string in srcStr to the start of destStr and returns the number of bytes
  * copied (not including the NULL-terminator) in numBytesPtr.  Null can be passed into numBytesPtr
@@ -119,9 +125,10 @@ le_result_t dataSample_StringToJson
 
             return LE_OK;
         }
-        else if (srcStr[i] == '\"')
+        // Handle characters that need to be escaped
+        else if ((srcStr[i] == 0x22) || (srcStr[i] == 0x5C) || ((srcStr[i] >= 0x0) && (srcStr[i] <= 0x1F)))
         {
-            // Need to escape the double quote
+            // Need to escape srcStr[i]
             if (2 + i >= destSize)
             {
                 // This character will not fit in the available space so stop.
@@ -137,7 +144,7 @@ le_result_t dataSample_StringToJson
 
             destStr[j] = '\\';
             j++;
-            destStr[j] = '\"';
+            destStr[j] = srcStr[i];
             i++;
             j++;
         }

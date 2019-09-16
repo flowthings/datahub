@@ -283,7 +283,9 @@ void dataSample_SetTimestamp
  * including the NULL-terminator) in numBytesPtr.  Null can be passed into numBytesPtr if the number
  * of bytes copied is not needed.  The srcStr must be in UTF-8 format.
  *
- * If srcStr contains double quotes then they are escaped.
+ * A JSON string begins and ends with quotation marks.  All Unicode characters may be placed within
+ * the quotation marks, except for the characters that must be escaped:
+ * quotation mark, reverse solidus, and the control characters (U+0000 through U+001F)
  *
  * If the size of srcStr is less than or equal to the destination buffer size then the entire srcStr
  * will be copied including the null-character.  The rest of the destination buffer is not modified.

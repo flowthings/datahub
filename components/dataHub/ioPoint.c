@@ -34,12 +34,6 @@ IoResource_t;
 //--------------------------------------------------------------------------------------------------
 static le_mem_PoolRef_t IoResourcePool = NULL;
 
-//--------------------------------------------------------------------------------------------------
-/**
- * Allocate a buffer that will be used for string conversions.
- */
-//--------------------------------------------------------------------------------------------------
-char newValue[HUB_MAX_STRING_BYTES];
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -187,13 +181,10 @@ void ioPoint_DoTypeCoercion
 
     double timestamp = dataSample_GetTimestamp(fromSample);
 
-    bool bool_value;
-    double double_value;
-    const char* char_value;
-
     switch (toType)
     {
         case IO_DATA_TYPE_TRIGGER:
+
             // If the pushed sample is not a trigger, then create a new trigger sample with the
             // same timestamp as the original sample.  Otherwise no type conversion required.
             if (fromType != IO_DATA_TYPE_TRIGGER)
@@ -203,61 +194,82 @@ void ioPoint_DoTypeCoercion
             break;
 
         case IO_DATA_TYPE_BOOLEAN:
+
             switch (fromType)
             {
                 case IO_DATA_TYPE_TRIGGER:
+
                     // If the pushed sample is a trigger, just use false.
                     toSample = dataSample_CreateBoolean(timestamp, false);
                     break;
 
                 case IO_DATA_TYPE_BOOLEAN:
+
                     break;  // No conversion required.
 
                 case IO_DATA_TYPE_NUMERIC:
-                    double_value = dataSample_GetNumeric(fromSample);
-                    toSample = dataSample_CreateBoolean(timestamp, (double_value != 0));
+                {
+                    double value = dataSample_GetNumeric(fromSample);
+                    toSample = dataSample_CreateBoolean(timestamp, (value != 0));
                     break;
+                }
 
                 case IO_DATA_TYPE_STRING:
-                    char_value = dataSample_GetString(fromSample);
-                    toSample = dataSample_CreateBoolean(timestamp, (char_value[0] != '\0'));
+                {
+                    const char* value = dataSample_GetString(fromSample);
+                    toSample = dataSample_CreateBoolean(timestamp, (value[0] != '\0'));
                     break;
+                }
 
                 case IO_DATA_TYPE_JSON:
-                    bool_value = json_ConvertToBoolean(dataSample_GetJson(fromSample));
-                    toSample = dataSample_CreateBoolean(timestamp, bool_value);
+                {
+                    bool newValue = json_ConvertToBoolean(dataSample_GetJson(fromSample));
+                    toSample = dataSample_CreateBoolean(timestamp, newValue);
                     break;
+                }
             }
+
             break;
 
         case IO_DATA_TYPE_NUMERIC:
+
             switch (fromType)
             {
                 case IO_DATA_TYPE_TRIGGER:
+
                     toSample = dataSample_CreateNumeric(timestamp, NAN);
                     break;
 
                 case IO_DATA_TYPE_BOOLEAN:
-                    double_value = (dataSample_GetBoolean(fromSample) ? 1 : 0);
-                    toSample = dataSample_CreateNumeric(timestamp, double_value);
+                {
+                    double newValue = (dataSample_GetBoolean(fromSample) ? 1 : 0);
+                    toSample = dataSample_CreateNumeric(timestamp, newValue);
                     break;
+                }
 
                 case IO_DATA_TYPE_NUMERIC:
+
                     break;  // No conversion required.
 
                 case IO_DATA_TYPE_STRING:
-                    double_value = (dataSample_GetString(fromSample)[0] == '\0' ? 0 : 1);
-                    toSample = dataSample_CreateNumeric(timestamp, double_value);
+                {
+                    double newValue = (dataSample_GetString(fromSample)[0] == '\0' ? 0 : 1);
+                    toSample = dataSample_CreateNumeric(timestamp, newValue);
                     break;
+                }
 
                 case IO_DATA_TYPE_JSON:
-                    double_value = json_ConvertToNumber(dataSample_GetJson(fromSample));
-                    toSample = dataSample_CreateNumeric(timestamp, double_value);
+                {
+                    double newValue = json_ConvertToNumber(dataSample_GetJson(fromSample));
+                    toSample = dataSample_CreateNumeric(timestamp, newValue);
                     break;
+                }
             }
             break;
 
         case IO_DATA_TYPE_STRING:
+        {
+            char newValue[HUB_MAX_STRING_BYTES];
             if (dataSample_ConvertToString(fromSample, fromType, newValue, sizeof(newValue)) == LE_OK)
             {
                 toSample = dataSample_CreateString(timestamp, newValue);
@@ -268,8 +280,11 @@ void ioPoint_DoTypeCoercion
                 toSample = NULL;
             }
             break;
+        }
 
         case IO_DATA_TYPE_JSON:
+        {
+            char newValue[HUB_MAX_STRING_BYTES];
             if (dataSample_ConvertToJson(fromSample, fromType, newValue, sizeof(newValue)) == LE_OK)
             {
                 toSample = dataSample_CreateJson(timestamp, newValue);
@@ -280,6 +295,7 @@ void ioPoint_DoTypeCoercion
                 toSample = NULL;
             }
             break;
+        }
     }
 
     // If a conversion happened, release the old value and replace it with the new one.
