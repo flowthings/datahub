@@ -115,7 +115,7 @@ le_result_t dataSample_StringToJson
     {
         if (srcStr[i] == '\0')
         {
-            // NULL character found.  Complete the copy and return.
+            /* NULL character found.  Complete the copy and return. */
             destStr[j] = '\0';
 
             if (numBytesPtr)
@@ -125,31 +125,10 @@ le_result_t dataSample_StringToJson
 
             return LE_OK;
         }
-        // Handle characters that need to be escaped
-        else if ((srcStr[i] == 0x22) || (srcStr[i] == 0x5C) || ((srcStr[i] >= 0x0) && (srcStr[i] <= 0x1F)))
+        else if ((srcStr[i] > 31) && (srcStr[i] != '\"') && (srcStr[i] != '\\'))
         {
-            // Need to escape srcStr[i]
-            if (2 + i >= destSize)
-            {
-                // This character will not fit in the available space so stop.
-                destStr[j] = '\0';
+            /* Normal character, copy */
 
-                if (numBytesPtr)
-                {
-                    *numBytesPtr = j;
-                }
-
-                return LE_OVERFLOW;
-            }
-
-            destStr[j] = '\\';
-            j++;
-            destStr[j] = srcStr[i];
-            i++;
-            j++;
-        }
-        else
-        {
             size_t charLength = le_utf8_NumBytesInChar(srcStr[i]);
 
             if (charLength == 0)
@@ -186,6 +165,66 @@ le_result_t dataSample_StringToJson
                     j++;
                 }
             }
+        }
+        else
+        {
+            /* Character needs to be escaped */
+
+            // Check if we have enough room to store the escape character(s) + the character
+            // Check if there is a room of 4 in case this is a unicode codepoint
+            if (4 + i >= destSize)
+            {
+                // This character will not fit in the available space so stop.
+                destStr[j] = '\0';
+
+                if (numBytesPtr)
+                {
+                    *numBytesPtr = j;
+                }
+
+                return LE_OVERFLOW;
+            }
+
+            destStr[j] = '\\';
+            j++;
+
+            switch (srcStr[i])
+            {
+                case '\\':
+                    destStr[j] = '\\';
+                    j++;
+                    break;
+                case '\"':
+                    destStr[j] = '\"';
+                    j++;
+                    break;
+                case '\b':
+                    destStr[j] = 'b';
+                    j++;
+                    break;
+                case '\f':
+                    destStr[j] = 'f';
+                    j++;
+                    break;
+                case '\n':
+                    destStr[j] = 'n';
+                    j++;
+                    break;
+                case '\r':
+                    destStr[j] = 'r';
+                    j++;
+                    break;
+                case '\t':
+                    destStr[j] = 't';
+                    j++;
+                    break;
+                default:
+                    /* escape and print as unicode codepoint */
+                    sprintf(destStr +j, "u%04x", srcStr[i]);
+                    j += 4;
+                    break;
+            }
+            i++;
         }
     }
 }
