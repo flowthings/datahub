@@ -170,9 +170,8 @@ le_result_t dataSample_StringToJson
         {
             /* Character needs to be escaped */
 
-            // Check if we have enough room to store the escape character(s) + the character
-            // Check if there is a room of 4 in case this is a unicode codepoint
-            if (4 + i >= destSize)
+            // Check if we have enough room to store the escape character + the character
+            if (2 + i >= destSize)
             {
                 // This character will not fit in the available space so stop.
                 destStr[j] = '\0';
@@ -219,8 +218,23 @@ le_result_t dataSample_StringToJson
                     j++;
                     break;
                 default:
-                    /* escape and print as unicode codepoint */
-                    sprintf(destStr +j, "u%04x", srcStr[i]);
+                    /* Escape and print as unicode codepoint */
+
+                    // Check if we have enough room to store the unicode codepoint
+                    if (5 + i >= destSize)
+                    {
+                        // This character will not fit in the available space so stop.
+                        destStr[j] = '\0';
+
+                        if (numBytesPtr)
+                        {
+                            *numBytesPtr = j;
+                        }
+
+                        return LE_OVERFLOW;
+                    }
+                    
+                    sprintf(destStr + j, "u%04x", srcStr[i]);
                     j += 4;
                     break;
             }
