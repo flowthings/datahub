@@ -61,6 +61,97 @@ static le_mem_PoolRef_t HugeStringSamplePool = NULL;
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Compute the length of the escaped character
+ *
+ * @return The length of the escaped character
+ */
+//--------------------------------------------------------------------------------------------------
+static int dataSample_ComputeEscapedCharLength
+(
+    char inputChar ///< [IN] The character we want to know the length when it is escaped
+)
+{
+    if ((inputChar > 31) && (inputChar != '\"') && (inputChar != '\\'))
+        return 1;
+
+    switch (inputChar)
+    {
+        case '\\':
+        case '\"':
+        case '\b':
+        case '\f':
+        case '\n':
+        case '\r':
+        case '\t':
+            return 2;
+            break;
+
+        default:
+            /* Unicode codepoint */
+            return 5;
+            break;
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Escape a character
+ *
+ * @warning escapedChar must point to a char array that has enough room to received the escaped
+ *          character. To know the needed room prior to call this function, you can compute
+ *          the escaped character length with dataSample_ComputeEscapedCharLength().
+ */
+//--------------------------------------------------------------------------------------------------
+static void dataSample_EscapeCharacter
+(
+    char inputChar,     ///< [IN] The character we want to escape
+    char* escapedChar   ///< [OUT] The escaped character
+)
+{
+    if ((inputChar > 31) && (inputChar != '\"') && (inputChar != '\\')) {
+        // The character don't need to be escaped, but handle the situation, in case.
+        escapedChar[0] = inputChar;
+        return;
+    }
+
+    // Write reverse solidus
+    escapedChar[0] = '\\';
+
+    switch (inputChar)
+    {
+        case '\\':
+            escapedChar[1] = '\\';
+            break;
+        case '\"':
+            escapedChar[1] = '\"';
+            break;
+        case '\b':
+            escapedChar[1] = 'b';
+            break;
+        case '\f':
+            escapedChar[1] = 'f';
+            break;
+        case '\n':
+            escapedChar[1] = 'n';
+            break;
+        case '\r':
+            escapedChar[1] = 'r';
+            break;
+        case '\t':
+            escapedChar[1] = 't';
+            break;
+        default:
+        {
+            /* Unicode codepoint */
+            int len = snprintf(&escapedChar[1], 4,"u%04x", inputChar);
+            LE_ASSERT(len == 4);
+            break;
+        }
+    }
+ }
+
+//--------------------------------------------------------------------------------------------------
+/**
  * PRELIMINARY NOTE :
  * ------------------
  * This function is similar to le_utf8_Copy. The main difference is that characters that need to
@@ -68,7 +159,7 @@ static le_mem_PoolRef_t HugeStringSamplePool = NULL;
  *
  * A JSON string begins and ends with quotation marks.  All Unicode characters may be placed within
  * the quotation marks, except for the characters that must be escaped:
- * quotation mark, reverse solidus, and the control characters (U+0000 through U+001F)
+ * quotation mark, reverse solidus, and the control characters (U+0001 through U+001F).
  *
  * Source : https://tools.ietf.org/html/rfc7159#section-7
  *
@@ -111,11 +202,12 @@ le_result_t dataSample_StringToJson
 
     // Go through the string copying one character at a time.
     size_t i = 0, j = 0;
+    int escapedCharLength = 0;
     while (1)
     {
         if (srcStr[i] == '\0')
         {
-            /* NULL character found.  Complete the copy and return. */
+            // NULL character found.  Complete the copy and return.
             destStr[j] = '\0';
 
             if (numBytesPtr)
@@ -127,7 +219,7 @@ le_result_t dataSample_StringToJson
         }
         else if ((srcStr[i] > 31) && (srcStr[i] != '\"') && (srcStr[i] != '\\'))
         {
-            /* Normal character, copy */
+            // Normal character, copy.
 
             size_t charLength = le_utf8_NumBytesInChar(srcStr[i]);
 
@@ -168,12 +260,13 @@ le_result_t dataSample_StringToJson
         }
         else
         {
-            /* Character needs to be escaped */
+            // This character needs to be escaped
 
-            // Check if we have enough room to store the escape character + the character
-            if (2 + i >= destSize)
+            // Check if we have enough room to store the escaped character
+            escapedCharLength = dataSample_ComputeEscapedCharLength(srcStr[i]);
+            if (escapedCharLength + i >= destSize)
             {
-                // This character will not fit in the available space so stop.
+                // It will not fit in the available space so stop.
                 destStr[j] = '\0';
 
                 if (numBytesPtr)
@@ -184,61 +277,10 @@ le_result_t dataSample_StringToJson
                 return LE_OVERFLOW;
             }
 
-            destStr[j] = '\\';
-            j++;
-
-            switch (srcStr[i])
-            {
-                case '\\':
-                    destStr[j] = '\\';
-                    j++;
-                    break;
-                case '\"':
-                    destStr[j] = '\"';
-                    j++;
-                    break;
-                case '\b':
-                    destStr[j] = 'b';
-                    j++;
-                    break;
-                case '\f':
-                    destStr[j] = 'f';
-                    j++;
-                    break;
-                case '\n':
-                    destStr[j] = 'n';
-                    j++;
-                    break;
-                case '\r':
-                    destStr[j] = 'r';
-                    j++;
-                    break;
-                case '\t':
-                    destStr[j] = 't';
-                    j++;
-                    break;
-                default:
-                    /* Escape and print as unicode codepoint */
-
-                    // Check if we have enough room to store the unicode codepoint
-                    if (5 + i >= destSize)
-                    {
-                        // This character will not fit in the available space so stop.
-                        destStr[j] = '\0';
-
-                        if (numBytesPtr)
-                        {
-                            *numBytesPtr = j;
-                        }
-
-                        return LE_OVERFLOW;
-                    }
-                    
-                    sprintf(destStr + j, "u%04x", srcStr[i]);
-                    j += 4;
-                    break;
-            }
+            // We have room, insert escaped character sequence
+            dataSample_EscapeCharacter(srcStr[i], &destStr[j]);
             i++;
+            j += escapedCharLength;
         }
     }
 }
