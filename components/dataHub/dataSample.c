@@ -63,16 +63,21 @@ static le_mem_PoolRef_t HugeStringSamplePool = NULL;
 /**
  * Compute the length of the escaped character
  *
- * @return The length of the escaped character
+ * @return The length of the escaped character in bytes
+ *
+ * @note UTF-8 characters are supported.
  */
 //--------------------------------------------------------------------------------------------------
-static int dataSample_ComputeEscapedCharLength
+static size_t ComputeEscapedCharLength
 (
     char inputChar ///< [IN] The character we want to know the length when it is escaped
 )
 {
-    if ((inputChar > 31) && (inputChar != '\"') && (inputChar != '\\'))
-        return 1;
+    if ((inputChar > 31) && (inputChar != '\"') && (inputChar != '\\')) {
+        // The character doesn't need to be escaped, so the length
+        // to return is the character length
+        return le_utf8_NumBytesInChar(inputChar);
+    }
 
     switch (inputChar)
     {
@@ -97,27 +102,36 @@ static int dataSample_ComputeEscapedCharLength
 /**
  * Escape a character
  *
+ * This function transforms a UTF-8 character into its escaped version.
+ * If the character doesn't need to be escaped then the character is copied as is.
+ *
  * @warning escapedChar must point to a char array that has enough room to received the escaped
  *          character. To know the needed room prior to call this function, you can compute
- *          the escaped character length with dataSample_ComputeEscapedCharLength().
+ *          the escaped character length with ComputeEscapedCharLength().
+ *
+ * @note UTF-8 characters are supported.
+ *
+ * @return The input character length in bytes (can be > 1 in UTF-8)
+ *
  */
 //--------------------------------------------------------------------------------------------------
-static void dataSample_EscapeCharacter
+static size_t EscapeCharacter
 (
-    char inputChar,     ///< [IN] The character we want to escape
-    char* escapedChar   ///< [OUT] The escaped character
+    const char* inputChar,  ///< [IN] The character we want to escape
+    char* escapedChar       ///< [OUT] The escaped character
 )
 {
-    if ((inputChar > 31) && (inputChar != '\"') && (inputChar != '\\')) {
-        // The character don't need to be escaped, but handle the situation, in case.
-        escapedChar[0] = inputChar;
-        return;
+    if ((inputChar[0] > 31) && (inputChar[0] != '\"') && (inputChar[0] != '\\')) {
+        // The input character don't need to be escaped
+        size_t charLength = le_utf8_NumBytesInChar(inputChar[0]);
+        strncpy (escapedChar, inputChar, charLength);
+        return charLength;
     }
 
     // Write reverse solidus
     escapedChar[0] = '\\';
 
-    switch (inputChar)
+    switch (inputChar[0])
     {
         case '\\':
             escapedChar[1] = '\\';
@@ -143,11 +157,13 @@ static void dataSample_EscapeCharacter
         default:
         {
             /* Unicode codepoint */
-            int len = snprintf(&escapedChar[1], 4,"u%04x", inputChar);
+            int len = snprintf(&escapedChar[1], 4,"u%04x", inputChar[0]);
             LE_ASSERT(len == 4);
             break;
         }
     }
+
+    return 1;
  }
 
 //--------------------------------------------------------------------------------------------------
@@ -201,8 +217,7 @@ le_result_t dataSample_StringToJson
     LE_ASSERT( (destStr != NULL) && (srcStr != NULL) && (destSize > 0) );
 
     // Go through the string copying one character at a time.
-    size_t i = 0, j = 0;
-    int escapedCharLength = 0;
+    size_t i = 0, j = 0, charLength = 0, escapedCharLength = 0;
     while (1)
     {
         if (srcStr[i] == '\0')
@@ -217,15 +232,16 @@ le_result_t dataSample_StringToJson
 
             return LE_OK;
         }
-        else if ((srcStr[i] > 31) && (srcStr[i] != '\"') && (srcStr[i] != '\\'))
+        else
         {
             // Normal character, copy.
 
-            size_t charLength = le_utf8_NumBytesInChar(srcStr[i]);
+            // First check if we have enough room to store the escaped version of the character.
+            escapedCharLength = ComputeEscapedCharLength(srcStr[i]);
 
-            if (charLength == 0)
+            if (escapedCharLength == 0)
             {
-                // This is an error in the string format.  Zero out the destStr and return.
+                // This is an error in the string format. Zero out the destStr and return.
                 destStr[0] = '\0';
 
                 if (numBytesPtr)
@@ -235,38 +251,10 @@ le_result_t dataSample_StringToJson
 
                 return LE_OK;
             }
-            else if (charLength + i >= destSize)
-            {
-                // This character will not fit in the available space so stop.
-                destStr[j] = '\0';
 
-                if (numBytesPtr)
-                {
-                    *numBytesPtr = j;
-                }
-
-                return LE_OVERFLOW;
-            }
-            else
+            if (escapedCharLength + j >= destSize)
             {
-                // Copy the character.
-                for (; charLength > 0; charLength--)
-                {
-                    destStr[j] = srcStr[i];
-                    i++;
-                    j++;
-                }
-            }
-        }
-        else
-        {
-            // This character needs to be escaped
-
-            // Check if we have enough room to store the escaped character
-            escapedCharLength = dataSample_ComputeEscapedCharLength(srcStr[i]);
-            if (escapedCharLength + i >= destSize)
-            {
-                // It will not fit in the available space so stop.
+                // It will not fit in the available space, so stop.
                 destStr[j] = '\0';
 
                 if (numBytesPtr)
@@ -277,9 +265,9 @@ le_result_t dataSample_StringToJson
                 return LE_OVERFLOW;
             }
 
-            // We have room, insert escaped character sequence
-            dataSample_EscapeCharacter(srcStr[i], &destStr[j]);
-            i++;
+            // We have enough room, insert the escaped character.
+            charLength = EscapeCharacter(&srcStr[i], &destStr[j]);
+            i += charLength;
             j += escapedCharLength;
         }
     }
