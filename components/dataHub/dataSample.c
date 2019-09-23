@@ -65,7 +65,7 @@ static le_mem_PoolRef_t HugeStringSamplePool = NULL;
  *
  * @return The length of the escaped character in bytes
  *
- * @note UTF-8 characters are supported.
+ * @note UTF-8 characters are supported. Only the first character is required to compute the length.
  */
 //--------------------------------------------------------------------------------------------------
 static size_t ComputeEscapedCharLength
@@ -110,6 +110,8 @@ static size_t ComputeEscapedCharLength
  *          the escaped character length with ComputeEscapedCharLength().
  *
  * @note UTF-8 characters are supported.
+ * @note This function manipules characters and not string, therefore no null-termination character
+ *       is added at the end of the escaped character.
  *
  * @return The input character length in bytes (can be > 1 in UTF-8)
  *
@@ -217,7 +219,10 @@ le_result_t dataSample_StringToJson
     LE_ASSERT( (destStr != NULL) && (srcStr != NULL) && (destSize > 0) );
 
     // Go through the string copying one character at a time.
-    size_t i = 0, j = 0, charLength = 0, escapedCharLength = 0;
+    size_t i = 0;
+    size_t j = 0;
+    size_t charLength = 0;
+    size_t escapedCharLength = 0;
     while (1)
     {
         if (srcStr[i] == '\0')
