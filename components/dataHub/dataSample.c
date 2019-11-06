@@ -278,6 +278,91 @@ le_result_t dataSample_StringToJson
     }
 }
 
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * JSON to String conversion
+ *
+ * This function transforms a JSON string into its unescaped version.
+ *
+ * A JSON string begins and ends with quotation marks.  All Unicode characters may be placed within
+ * the quotation marks, except for the characters that must be escaped:
+ * quotation mark, reverse solidus, and the control characters (U+0001 through U+001F).
+ *
+ * This function copies the string in srcStr to the start of destStr and returns the number of bytes
+ * copied (not including the NULL-terminator) in numBytesPtr.  Null can be passed into numBytesPtr
+ * if the number of bytes copied is not needed.
+ *
+ * Size of the destination buffer must be equal to at least the length of the source string srcStr.
+ *
+ * The destination string will always be Null-terminated, unless destSize is zero.
+ *
+ * If destStr and srcStr overlap the behaviour of this function is undefined.
+ *
+ * @note UTF-8 characters are supported.
+ */
+//--------------------------------------------------------------------------------------------------
+le_result_t dataSample_JsonToString
+(
+    char* destStr,          ///< [IN] The destination where the srcStr is to be copied.
+    const char* srcStr,     ///< [IN] The UTF-8 source string.
+    const size_t destSize,  ///< [IN] Size of the destination buffer in bytes.
+    size_t* numBytesPtr     ///< [OUT] The number of bytes copied not including the NULL-terminator.
+                            ///        This parameter can be set to NULL if the number of bytes
+                            ///        copied is not needed.
+)
+{
+    size_t srcLen = strlen(srcStr);
+
+    // Check parameters.
+    if ((destStr == NULL) || (srcStr == NULL) || (destSize < srcLen))
+    {
+        return LE_OVERFLOW;
+    }
+
+    // Go through the string copying one character at a time.
+    size_t read_index = 0;
+    size_t write_index = 0;
+    size_t pos;
+
+    // Skip the first '"'
+    read_index++;
+
+    while (1)
+    {
+        // Get the position of the next reverse solidus, if exists
+        pos = strcspn(&srcStr[read_index], "\\");
+
+        // Copy the string up to there
+        strncpy(&destStr[write_index], &srcStr[read_index], pos);
+        write_index += pos;
+        read_index += pos;
+
+        if (read_index >= srcLen)
+        {
+            // There is no more characters to copy, stop now
+            break;
+        }
+
+        // A reverse solidus has been found, remove it and copy the following character
+        read_index++;
+        destStr[write_index] = srcStr[read_index];
+        read_index++;
+        write_index++;
+    }
+
+    // Remove the trailing '"' and return.
+    write_index--;
+    destStr[write_index] = '\0';
+
+    if (numBytesPtr)
+    {
+        *numBytesPtr = write_index;
+    }
+
+    return LE_OK;
+}
+
 //--------------------------------------------------------------------------------------------------
 /**
  * Initialize the Data Sample module.
@@ -590,16 +675,65 @@ const le_result_t dataSample_ConvertToString
 )
 //--------------------------------------------------------------------------------------------------
 {
-    if (dataType == IO_DATA_TYPE_STRING)
+    switch(dataType)
     {
-        return le_utf8_Copy(valueBuffPtr, sampleRef->value.string, valueBuffSize, NULL);
-    }
-    else
-    {
-        return dataSample_ConvertToJson(sampleRef, dataType, valueBuffPtr, valueBuffSize);
-    }
-}
+        case IO_DATA_TYPE_TRIGGER:
+        {
+            if (valueBuffSize > 0)
+            {
+                valueBuffPtr[0] = '\0';
+                return LE_OK;
+            }
+            return LE_OVERFLOW;
+        }
 
+        case IO_DATA_TYPE_BOOLEAN:
+        {
+            int i;
+
+            if (sampleRef->value.boolean)
+            {
+                i = snprintf(valueBuffPtr, valueBuffSize, "true");
+            }
+            else
+            {
+                i = snprintf(valueBuffPtr, valueBuffSize, "false");
+            }
+
+            if (i >= valueBuffSize)
+            {
+                return LE_OVERFLOW;
+            }
+            return LE_OK;
+        }
+
+        case IO_DATA_TYPE_NUMERIC:
+        {
+            if (valueBuffSize <= snprintf(valueBuffPtr,
+                                          valueBuffSize,
+                                          "%lf",
+                                          sampleRef->value.numeric))
+            {
+                return LE_OVERFLOW;
+            }
+            return LE_OK;
+        }
+
+        case IO_DATA_TYPE_STRING:
+        {
+            // Already in String format, just copy it into the buffer.
+            return le_utf8_Copy(valueBuffPtr, sampleRef->value.string, valueBuffSize, NULL);
+        }
+
+        case IO_DATA_TYPE_JSON:
+        {
+            // We need to unescape the string
+            return dataSample_JsonToString(valueBuffPtr, sampleRef->value.string, valueBuffSize, NULL);
+        }
+    }
+
+    LE_FATAL("Invalid data type %d.", dataType);
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
