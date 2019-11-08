@@ -285,10 +285,6 @@ le_result_t dataSample_StringToJson
  *
  * This function transforms a JSON string into its unescaped version.
  *
- * A JSON string begins and ends with quotation marks.  All Unicode characters may be placed within
- * the quotation marks, except for the characters that must be escaped:
- * quotation mark, reverse solidus, and the control characters (U+0001 through U+001F).
- *
  * This function copies the string in srcStr to the start of destStr and returns the number of bytes
  * copied (not including the NULL-terminator) in numBytesPtr.  Null can be passed into numBytesPtr
  * if the number of bytes copied is not needed.
@@ -312,52 +308,65 @@ le_result_t dataSample_JsonToString
                             ///        copied is not needed.
 )
 {
+    size_t readIndex = 0;
+    size_t writeIndex = 0;
+    size_t pos;
     size_t srcLen = strlen(srcStr);
 
     // Check parameters.
     if ((destStr == NULL) || (srcStr == NULL) || (destSize < srcLen))
     {
-        return LE_OVERFLOW;
+        return LE_BAD_PARAMETER;
     }
 
-    // Go through the string copying one character at a time.
-    size_t read_index = 0;
-    size_t write_index = 0;
-    size_t pos;
+    if ((srcStr[0] != '\"') && (srcStr[srcLen-1] != '\"'))
+    {
+        // This JSON does not begin nor end with double marks, just copy the string
+        return le_utf8_Copy(destStr, srcStr, destSize, numBytesPtr);
+    }
+
+    // Now we handle JSON that are contained between double marks.
+    // We have to remove those double marks and unescape the string.
+
+    if (srcLen < 2)
+    {
+        LE_ERROR("Input JSON is invalid");
+        return LE_FORMAT_ERROR;
+    }
 
     // Skip the first '"'
-    read_index++;
+    readIndex++;
 
     while (1)
     {
         // Get the position of the next reverse solidus, if exists
-        pos = strcspn(&srcStr[read_index], "\\");
+        pos = strcspn(&srcStr[readIndex], "\\");
 
         // Copy the string up to there
-        strncpy(&destStr[write_index], &srcStr[read_index], pos);
-        write_index += pos;
-        read_index += pos;
+        strncpy(&destStr[writeIndex], &srcStr[readIndex], pos);
+        writeIndex += pos;
+        readIndex += pos;
 
-        if (read_index >= srcLen)
+        if (readIndex >= srcLen)
         {
             // There is no more characters to copy, stop now
             break;
         }
 
         // A reverse solidus has been found, remove it and copy the following character
-        read_index++;
-        destStr[write_index] = srcStr[read_index];
-        read_index++;
-        write_index++;
+        readIndex++;
+        destStr[writeIndex] = srcStr[readIndex];
+        readIndex++;
+        writeIndex++;
     }
 
     // Remove the trailing '"' and return.
-    write_index--;
-    destStr[write_index] = '\0';
+    writeIndex--;
+    destStr[writeIndex] = '\0';
 
     if (numBytesPtr)
     {
-        *numBytesPtr = write_index;
+        *numBytesPtr = writeIndex;
     }
 
     return LE_OK;
@@ -732,7 +741,8 @@ const le_result_t dataSample_ConvertToString
         }
     }
 
-    LE_FATAL("Invalid data type %d.", dataType);
+    LE_ERROR("Invalid data type %d.", dataType);
+    return LE_BAD_PARAMETER;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -824,7 +834,8 @@ const le_result_t dataSample_ConvertToJson
             return le_utf8_Copy(valueBuffPtr, sampleRef->value.string, valueBuffSize, NULL);
     }
 
-    LE_FATAL("Invalid data type %d.", dataType);
+    LE_ERROR("Invalid data type %d.", dataType);
+    return LE_BAD_PARAMETER;
 }
 
 
