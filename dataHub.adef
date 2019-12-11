@@ -33,6 +33,8 @@ processes:
     faultAction: restart
 }
 
+maxMemoryBytes: 81920K
+
 extern:
 {
     hubd.dataHub.le_appInfo
