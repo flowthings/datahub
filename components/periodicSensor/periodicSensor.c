@@ -42,6 +42,40 @@ static le_mem_PoolRef_t SensorPool = NULL;
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Safe references to lookup Sensor_t objects.
+ *
+ * @note The size of the map doesn't have to be very big, since the map is located in the client
+ * i.e. there is a separate map for each client.  Use a prime number!
+ */
+//--------------------------------------------------------------------------------------------------
+static le_hashmap_Ref_t SensorMap = NULL;
+#define PSENSOR_SAFEREF_MAP_SIZE  7
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Sensor lookup function.
+ */
+//--------------------------------------------------------------------------------------------------
+static Sensor_t *LookupSensor
+(
+    void *ref
+)
+//--------------------------------------------------------------------------------------------------
+{
+    Sensor_t *sensorPtr = (Sensor_t *)le_hashmap_Get(SensorMap, ref);
+
+    if (NULL == sensorPtr)
+    {
+        LE_ERROR("No sensor found for ref %p", ref);
+    }
+
+    return sensorPtr;
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Timer expiry handler function.
  */
 //--------------------------------------------------------------------------------------------------
@@ -51,9 +85,13 @@ static void HandleTimerExpiry
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = le_timer_GetContextPtr(timer);
+    void *sensorRef = le_timer_GetContextPtr(timer);
+    Sensor_t* sensorPtr = LookupSensor(sensorRef);
 
-    sensorPtr->sampleFunc(sensorPtr, sensorPtr->sampleFuncContext);
+    if (NULL != sensorPtr)
+    {
+        sensorPtr->sampleFunc(sensorRef, sensorPtr->sampleFuncContext);
+    }
 }
 
 
@@ -66,28 +104,31 @@ static void HandleEnablePush
 (
     double timestamp,   ///< Don't care about this.
     bool enable,
-    void* contextPtr
+    void* sensorRef
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = contextPtr;
+    Sensor_t* sensorPtr = LookupSensor(sensorRef);
 
-    if (sensorPtr->isEnabled != enable)
+    if (NULL != sensorPtr)
     {
-        sensorPtr->isEnabled = enable;
+        if (sensorPtr->isEnabled != enable)
+        {
+            sensorPtr->isEnabled = enable;
 
-        if (enable)
-        {
-            // If the period has been set, take a sample and start the timer.
-            if (sensorPtr->period > 0.0)
+            if (enable)
             {
-                sensorPtr->sampleFunc(sensorPtr, sensorPtr->sampleFuncContext);
-                le_timer_Start(sensorPtr->timer);
+                // If the period has been set, take a sample and start the timer.
+                if (sensorPtr->period > 0.0)
+                {
+                    sensorPtr->sampleFunc(sensorRef, sensorPtr->sampleFuncContext);
+                    le_timer_Start(sensorPtr->timer);
+                }
             }
-        }
-        else
-        {
-            le_timer_Stop(sensorPtr->timer);
+            else
+            {
+                le_timer_Stop(sensorPtr->timer);
+            }
         }
     }
 }
@@ -102,47 +143,50 @@ static void HandlePeriodPush
 (
     double timestamp,   ///< Don't care about this.
     double period,      ///< seconds
-    void* contextPtr
+    void* sensorRef
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = contextPtr;
+    Sensor_t* sensorPtr = LookupSensor(sensorRef);
 
-    // If the new value is the same as the old value, ignore the push.
-    if (sensorPtr->period != period)
+    if (NULL != sensorPtr)
     {
-        // Sanity check the period.
-        // If it's invalid, stop the timer and set the period to 0.0.
-        if (period <= 0.0)
+        // If the new value is the same as the old value, ignore the push.
+        if (sensorPtr->period != period)
         {
-            LE_ERROR("Timer period %lf is out of range. Must be > 0.", period);
-            le_timer_Stop(sensorPtr->timer);
-            sensorPtr->period = 0.0;
-        }
-        else if (period > (double)(0x7FFFFFFF)) // Don't know how big time_t is, assume 32-bits.
-        {
-            LE_ERROR("Timer period %lf is too high.", period);
-            le_timer_Stop(sensorPtr->timer);
-            sensorPtr->period = 0.0;
-        }
-        else
-        {
-            // The new period is good.
-            // Set the timer's interval to the period.
-            le_clk_Time_t interval;
-            interval.sec = (time_t)period;
-            interval.usec = (period - interval.sec) * 1000000;
-            le_timer_SetInterval(sensorPtr->timer, interval);
-
-            // If the old value was zero and the sensor is enabled, take a sample and
-            // start the timer now.
-            if ((sensorPtr->period == 0) && sensorPtr->isEnabled)
+            // Sanity check the period.
+            // If it's invalid, stop the timer and set the period to 0.0.
+            if (period <= 0.0)
             {
-                sensorPtr->sampleFunc(sensorPtr, sensorPtr->sampleFuncContext);
-                le_timer_Start(sensorPtr->timer);
+                LE_ERROR("Timer period %lf is out of range. Must be > 0.", period);
+                le_timer_Stop(sensorPtr->timer);
+                sensorPtr->period = 0.0;
             }
+            else if (period > (double)(0x7FFFFFFF)) // Don't know how big time_t is, assume 32-bits.
+            {
+                LE_ERROR("Timer period %lf is too high.", period);
+                le_timer_Stop(sensorPtr->timer);
+                sensorPtr->period = 0.0;
+            }
+            else
+            {
+                // The new period is good.
+                // Set the timer's interval to the period.
+                le_clk_Time_t interval;
+                interval.sec = (time_t)period;
+                interval.usec = (period - interval.sec) * 1000000;
+                le_timer_SetInterval(sensorPtr->timer, interval);
 
-            sensorPtr->period = period;
+                // If the old value was zero and the sensor is enabled, take a sample and
+                // start the timer now.
+                if ((sensorPtr->period == 0) && sensorPtr->isEnabled)
+                {
+                    sensorPtr->sampleFunc(sensorRef, sensorPtr->sampleFuncContext);
+                    le_timer_Start(sensorPtr->timer);
+                }
+
+                sensorPtr->period = period;
+            }
         }
     }
 }
@@ -156,15 +200,18 @@ static void HandlePeriodPush
 static void HandleTriggerPush
 (
     double timestamp,   ///< Don't care about this.
-    void* contextPtr
+    void* sensorRef
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = contextPtr;
+    Sensor_t* sensorPtr = LookupSensor(sensorRef);
 
-    if (sensorPtr->isEnabled)
+    if (NULL != sensorPtr)
     {
-        sensorPtr->sampleFunc(sensorPtr, sensorPtr->sampleFuncContext);
+        if (sensorPtr->isEnabled)
+        {
+            sensorPtr->sampleFunc(sensorRef, sensorPtr->sampleFuncContext);
+        }
     }
 }
 
@@ -218,6 +265,10 @@ psensor_Ref_t psensor_Create
 //--------------------------------------------------------------------------------------------------
 {
     Sensor_t* sensorPtr = le_mem_ForceAlloc(SensorPool);
+    void *sensorRef;
+
+    sensorRef = (void *)((unsigned int)sensorPtr ^ le_rand_GetNumBetween(0, 0x7FFFFFFF));
+    le_hashmap_Put(SensorMap, sensorRef, sensorPtr);
 
     sensorPtr->isEnabled = false;
     sensorPtr->period = 0.0;
@@ -225,7 +276,7 @@ psensor_Ref_t psensor_Create
     sensorPtr->timer = le_timer_Create(name);
     le_timer_SetRepeat(sensorPtr->timer, 0); // Repeat an infinite number of times.
     le_timer_SetHandler(sensorPtr->timer, HandleTimerExpiry);
-    le_timer_SetContextPtr(sensorPtr->timer, sensorPtr);
+    le_timer_SetContextPtr(sensorPtr->timer, sensorRef);
 
     sensorPtr->sampleFunc = sampleFunc;
     sensorPtr->sampleFuncContext = sampleFuncContext;
@@ -250,7 +301,7 @@ psensor_Ref_t psensor_Create
     {
         LE_FATAL("Failed to create Data Hub Output '%s' (%s).", path, LE_RESULT_TXT(result));
     }
-    sensorPtr->enableHandlerRef = dhubIO_AddBooleanPushHandler(path, HandleEnablePush, sensorPtr);
+    sensorPtr->enableHandlerRef = dhubIO_AddBooleanPushHandler(path, HandleEnablePush, sensorRef);
 
     BuildResourcePath(path, sizeof(path), sensorPtr, "period");
     result = dhubIO_CreateOutput(path, DHUBIO_DATA_TYPE_NUMERIC, "s");
@@ -258,7 +309,7 @@ psensor_Ref_t psensor_Create
     {
         LE_FATAL("Failed to create Data Hub Output '%s' (%s).", path, LE_RESULT_TXT(result));
     }
-    sensorPtr->periodHandlerRef = dhubIO_AddNumericPushHandler(path, HandlePeriodPush, sensorPtr);
+    sensorPtr->periodHandlerRef = dhubIO_AddNumericPushHandler(path, HandlePeriodPush, sensorRef);
 
     BuildResourcePath(path, sizeof(path), sensorPtr, "trigger");
     result = dhubIO_CreateOutput(path, DHUBIO_DATA_TYPE_TRIGGER, "");
@@ -266,10 +317,10 @@ psensor_Ref_t psensor_Create
     {
         LE_FATAL("Failed to create Data Hub Output '%s' (%s).", path, LE_RESULT_TXT(result));
     }
-    sensorPtr->triggerHandlerRef = dhubIO_AddTriggerPushHandler(path, HandleTriggerPush, sensorPtr);
+    sensorPtr->triggerHandlerRef = dhubIO_AddTriggerPushHandler(path, HandleTriggerPush, sensorRef);
     dhubIO_MarkOptional(path);
 
-    return sensorPtr;
+    return (psensor_Ref_t)sensorRef;
 }
 
 
@@ -301,7 +352,9 @@ psensor_Ref_t psensor_CreateJson
                                        sampleFuncContext);
 
     char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
-    BuildResourcePath(path, sizeof(path), ref, "value");
+    Sensor_t* sensorPtr = LookupSensor(ref);
+    LE_ASSERT(sensorPtr);
+    BuildResourcePath(path, sizeof(path), sensorPtr, "value");
     dhubIO_SetJsonExample(path, jsonExample);
 
     return ref;
@@ -324,7 +377,7 @@ void psensor_Destroy
 
     LE_ASSERT(NULL != ref);
 
-    sensorPtr = *ref;
+    sensorPtr = le_hashmap_Remove(SensorMap, *ref);
     *ref = NULL;
 
     if (sensorPtr)
@@ -369,12 +422,15 @@ void psensor_PushBoolean
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = ref;
+    Sensor_t* sensorPtr = LookupSensor(ref);
 
-    char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
-    LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
+    if (NULL != sensorPtr)
+    {
+        char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
+        LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
 
-    dhubIO_PushBoolean(path, timestamp, value);
+        dhubIO_PushBoolean(path, timestamp, value);
+    }
 }
 
 
@@ -391,12 +447,15 @@ void psensor_PushNumeric
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = ref;
+    Sensor_t* sensorPtr = LookupSensor(ref);
 
-    char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
-    LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
+    if (NULL != sensorPtr)
+    {
+        char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
+        LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
 
-    dhubIO_PushNumeric(path, timestamp, value);
+        dhubIO_PushNumeric(path, timestamp, value);
+    }
 }
 
 
@@ -413,12 +472,15 @@ void psensor_PushString
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = ref;
+    Sensor_t* sensorPtr = LookupSensor(ref);
 
-    char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
-    LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
+    if (NULL != sensorPtr)
+    {
+        char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
+        LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
 
-    dhubIO_PushString(path, timestamp, value);
+        dhubIO_PushString(path, timestamp, value);
+    }
 }
 
 
@@ -435,16 +497,27 @@ void psensor_PushJson
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t* sensorPtr = ref;
+    Sensor_t* sensorPtr = LookupSensor(ref);
 
-    char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
-    LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
+    if (NULL != sensorPtr)
+    {
+        char path[DHUBIO_MAX_RESOURCE_PATH_LEN];
+        LE_ASSERT(snprintf(path, sizeof(path), "%s/value", sensorPtr->name) < sizeof(path));
 
-    dhubIO_PushJson(path, timestamp, value);
+        dhubIO_PushJson(path, timestamp, value);
+    }
 }
 
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Initialize sensor pool and safe references
+ */
+//--------------------------------------------------------------------------------------------------
 COMPONENT_INIT
 {
     SensorPool = le_mem_CreatePool("psensor", sizeof(Sensor_t));
+
+    SensorMap = le_hashmap_Create("psensor", PSENSOR_SAFEREF_MAP_SIZE,
+                                  le_hashmap_HashVoidPointer, le_hashmap_EqualsVoidPointer);
 }
