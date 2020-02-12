@@ -48,7 +48,7 @@ static le_mem_PoolRef_t SensorPool = NULL;
  * i.e. there is a separate map for each client.  Use a prime number!
  */
 //--------------------------------------------------------------------------------------------------
-static le_hashmap_Ref_t SensorMap = NULL;
+static le_ref_MapRef_t SensorMap;
 #define PSENSOR_SAFEREF_MAP_SIZE  7
 
 
@@ -63,7 +63,7 @@ static Sensor_t *LookupSensor
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Sensor_t *sensorPtr = (Sensor_t *)le_hashmap_Get(SensorMap, ref);
+    Sensor_t *sensorPtr = (Sensor_t *)le_ref_Lookup(SensorMap, ref);
 
     if (NULL == sensorPtr)
     {
@@ -265,10 +265,7 @@ psensor_Ref_t psensor_Create
 //--------------------------------------------------------------------------------------------------
 {
     Sensor_t* sensorPtr = le_mem_ForceAlloc(SensorPool);
-    void *sensorRef;
-
-    sensorRef = (void *)((unsigned int)sensorPtr ^ le_rand_GetNumBetween(0, 0x7FFFFFFF));
-    le_hashmap_Put(SensorMap, sensorRef, sensorPtr);
+    void *sensorRef = le_ref_CreateRef(SensorMap, sensorPtr);
 
     sensorPtr->isEnabled = false;
     sensorPtr->period = 0.0;
@@ -377,7 +374,9 @@ void psensor_Destroy
 
     LE_ASSERT(NULL != ref);
 
-    sensorPtr = le_hashmap_Remove(SensorMap, *ref);
+    sensorPtr = LookupSensor(*ref);
+    le_ref_DeleteRef(SensorMap, *ref);
+
     *ref = NULL;
 
     if (sensorPtr)
@@ -518,6 +517,5 @@ COMPONENT_INIT
 {
     SensorPool = le_mem_CreatePool("psensor", sizeof(Sensor_t));
 
-    SensorMap = le_hashmap_Create("psensor", PSENSOR_SAFEREF_MAP_SIZE,
-                                  le_hashmap_HashVoidPointer, le_hashmap_EqualsVoidPointer);
+    SensorMap = le_ref_CreateMap("contexts", PSENSOR_SAFEREF_MAP_SIZE);
 }
