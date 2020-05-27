@@ -25,6 +25,7 @@ requires:
     component:
     {
         $CURDIR/../json
+        $CURDIR/../jsonFormatter
     }
 }
 
@@ -46,4 +47,5 @@ sources:
 cflags:
 {
     -I$CURDIR/../json
+    -I$CURDIR/../jsonFormatter
 }
