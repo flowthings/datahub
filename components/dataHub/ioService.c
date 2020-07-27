@@ -148,7 +148,7 @@ le_result_t io_CreateInput
     resRef = resTree_GetInput(nsRef, path, dataType, units);
     if (resRef == NULL)
     {
-        LE_KILL_CLIENT("Failed to create Input '/app/%s/%s'.", resTree_GetEntryName(nsRef), path);
+        LE_ERROR("Failed to create Input '/app/%s/%s'.", resTree_GetEntryName(nsRef), path);
         return LE_FAULT;    // Client has been killed, so it doesn't matter what we return.
     }
 
@@ -269,7 +269,7 @@ le_result_t io_CreateOutput
     resRef = resTree_GetOutput(nsRef, path, dataType, units);
     if (resRef == NULL)
     {
-        LE_KILL_CLIENT("Failed to create Output '/app/%s/%s'.", resTree_GetEntryName(nsRef), path);
+        LE_ERROR("Failed to create Output '/app/%s/%s'.", resTree_GetEntryName(nsRef), path);
         return LE_FAULT;    // Client has been killed, so it doesn't matter what we return.
     }
 
