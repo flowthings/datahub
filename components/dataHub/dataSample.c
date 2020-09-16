@@ -770,9 +770,9 @@ const le_result_t dataSample_ConvertToJson
     {
         case IO_DATA_TYPE_TRIGGER:
 
-            if (valueBuffSize > 1)
+            if (valueBuffSize > 4)
             {
-                snprintf(valueBuffPtr, valueBuffSize, "1");
+                snprintf(valueBuffPtr, valueBuffSize, "null");
                 return LE_OK;
             }
             return LE_OVERFLOW;
