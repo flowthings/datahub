@@ -769,13 +769,8 @@ const le_result_t dataSample_ConvertToJson
     switch (dataType)
     {
         case IO_DATA_TYPE_TRIGGER:
-
-            if (valueBuffSize > 4)
-            {
-                snprintf(valueBuffPtr, valueBuffSize, "null");
-                return LE_OK;
-            }
-            return LE_OVERFLOW;
+        
+            return le_utf8_Copy(valueBuffPtr, "null", valueBuffSize, NULL);
 
         case IO_DATA_TYPE_BOOLEAN:
         {
