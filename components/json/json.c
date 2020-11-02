@@ -44,14 +44,12 @@ static const char* SkipWhitespace
  * @return Pointer to the first character after the string, or NULL on error.
  */
 //--------------------------------------------------------------------------------------------------
-static const char * SkipString
+static const char* SkipString
 (
-    const char *valPtr
+    const char* valPtr
 )
-// --------------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------------
 {
-    int countChar = 0;
-
     if (*valPtr != '"')
     {
         return NULL;
@@ -61,19 +59,15 @@ static const char * SkipString
 
     while (*valPtr != '"')
     {
-        countChar++;
-        if ((*valPtr == '\0') ||
-            (countChar > JSON_STRING_MAX_LEN))
+        if (*valPtr == '\0')
         {
             return NULL;
         }
 
         // Skip an escaped quote.
-        if (((valPtr[0] == '\\') && (valPtr[1] == '"')) ||
-            ((valPtr[0] == '\\') && (valPtr[1] == '\\')))
+        if (valPtr[0] == '\\')
         {
             valPtr += 2;
-            countChar++;
         }
         else
         {
@@ -562,8 +556,6 @@ static le_result_t Find
     const char* specPtr = extractionSpec;
     const char* valPtr = original;
 
-    LE_INFO("OGA : 9 #########################  Find :%s",specPtr);
-
     while (valPtr && (*valPtr != '\0'))
     {
         switch (*specPtr)
@@ -661,8 +653,7 @@ le_result_t json_Extract
     const char* valPtr;
 
     le_result_t result = Find(jsonValue, extractionSpec, &valPtr);
-    
-    LE_INFO("OGA : 8 ######################### :%d",result);
+
     if (result != LE_OK)
     {
         return result;
