@@ -65,7 +65,7 @@ static const char* SkipString
         }
 
         // Skip an escaped quote.
-        if ((valPtr[0] == '\\') && (valPtr[1] == '"'))
+        if (valPtr[0] == '\\')
         {
             valPtr += 2;
         }
