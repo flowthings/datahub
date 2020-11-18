@@ -8,6 +8,11 @@
 #include "legato.h"
 #include "interfaces.h"
 
+#ifdef WITH_OCTAVE
+/// Use query API custom flag as full tree encoding request
+#define OCTAVE_FLAG_FULL_TREE QUERY_SNAPSHOT_FLAG_CUSTOM
+#endif
+
 /// FD monitor for the incoming snapshot data FD.
 static le_fdMonitor_Ref_t MonitorRef;
 
@@ -105,7 +110,7 @@ static void HandleStreamData
     size_t  offset;
     ssize_t count;
     ssize_t written;
-    uint8_t buffer[128];
+    uint8_t buffer[8192];
 
     if (events & POLLIN)
     {
@@ -125,6 +130,7 @@ static void HandleStreamData
             }
             else if (count > 0)
             {
+                LE_INFO("Received: %d", count);
                 offset = 0;
                 while (count > 0)
                 {
@@ -136,6 +142,7 @@ static void HandleStreamData
                     }
                     else
                     {
+                        LE_INFO("Wrote: %d", written);
                         count -= written;
                         offset += written;
                         LE_ASSERT(count >= 0);
@@ -162,6 +169,9 @@ static void HandleHelpRequest
 {
     puts(
         "Usage: dsnap [-h] [-f <format>] [-t on|off] [-s <since>] [-p <path>]"
+#ifdef WITH_OCTAVE
+        " [-F]"
+#endif
 #if LE_CONFIG_FILESYSTEM
         " [-o <output>]"
 #endif
@@ -170,12 +180,19 @@ static void HandleHelpRequest
     puts(
         "\n"
         "    -h, --help              Display this help.\n"
+#ifdef WITH_OCTAVE
+        "    -f, --format=<string>   Set output format to <string> (\"json\" or \"octave\").\n"
+#else
         "    -f, --format=<string>   Set output format to <string> (only \"json\" so far).\n"
+#endif
         "    -t, --track=on|off      Turn deletion tracking on or off.  Default is off.\n"
         "    -s, --since=<number>    Only output information for records that have changed since\n"
         "                            <number> seconds from the Epoch.  Default (no limit) is 0.\n"
         "    -p, --path=<string>     Only consider the tree at and beneath the path <string>.\n"
         "                            The default is \"/\" for the full tree.\n"
+#ifdef WITH_OCTAVE
+        "    -F                      Encode full tree (diff otherwise, octave format only).\n"
+#endif
 #if LE_CONFIG_FILESYSTEM
         "    -o, --output=<string>   File path to write the output to.  Default is to write to\n"
         "                            stdout.\n"
@@ -200,6 +217,9 @@ COMPONENT_INIT
     const char  *trackStr = "";
     double       since;
     int          formatStream = -1;
+#ifdef WITH_OCTAVE
+    bool         fullDump = false;
+#endif
     le_result_t  result;
     uint32_t     flags = QUERY_SNAPSHOT_FLAG_FLUSH_DELETIONS;
     uint32_t     format;
@@ -213,6 +233,9 @@ COMPONENT_INIT
     le_arg_SetStringVar(&sinceStr, "s", "since");
     le_arg_SetStringVar(&trackStr, "t", "track");
     le_arg_SetStringVar(&pathStr, "p", "path");
+#ifdef WITH_OCTAVE
+    le_arg_SetFlagVar(&fullDump, "F", "fulldump");
+#endif
 #if LE_CONFIG_FILESYSTEM
     le_arg_SetStringVar(&outputStr, "o", "output");
 #endif
@@ -229,6 +252,13 @@ COMPONENT_INIT
     {
         format = QUERY_SNAPSHOT_FORMAT_JSON;
     }
+#ifdef WITH_OCTAVE
+    else if (strcmp(formatStr, "octave") == 0)
+    {
+        LE_INFO("Using octave format");
+        format = QUERY_SNAPSHOT_FORMAT_OCTAVE;
+    }
+#endif
     else
     {
         LE_ERROR("Unknown format: %s", formatStr);
@@ -271,10 +301,17 @@ COMPONENT_INIT
     }
     else
     {
-        OutFile = le_fd_Open(outputStr, O_WRONLY | O_CREAT | O_TRUNC,
-            S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
+        LE_INFO("Opening %s for output", outputStr);
+        OutFile = le_fd_Open(outputStr, O_WRONLY | O_CREAT | O_TRUNC);
     }
     LE_ASSERT(OutFile >= 0);
+
+#ifdef WITH_OCTAVE
+    if (fullDump)
+    {
+        flags |= OCTAVE_FLAG_FULL_TREE;
+    }
+#endif
 
     // Initiate the snapshot.
     query_TakeSnapshot(format, flags, pathStr, since, &HandleResult, NULL, &formatStream);

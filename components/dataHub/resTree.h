@@ -310,6 +310,18 @@ LE_SHARED ssize_t resTree_GetPath
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Get the parent of a given entry.
+ *
+ * @return Reference to the parent entry, or NULL if the entry has no parent (root).
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED resTree_EntryRef_t resTree_GetParent
+(
+    resTree_EntryRef_t entryRef ///< Node to get the parent of.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Get the first child of a given entry, optionally including already deleted nodes if they have not
  * been flushed.
  *
@@ -721,7 +733,7 @@ void resTree_SetDefault
  * @return true if there is a default value set, false if not.
  */
 //--------------------------------------------------------------------------------------------------
-bool resTree_HasDefault
+LE_SHARED bool resTree_HasDefault
 (
     resTree_EntryRef_t resEntry
 );
@@ -734,7 +746,7 @@ bool resTree_HasDefault
  * @return The data type, or IO_DATA_TYPE_TRIGGER if not set.
  */
 //--------------------------------------------------------------------------------------------------
-io_DataType_t resTree_GetDefaultDataType
+LE_SHARED io_DataType_t resTree_GetDefaultDataType
 (
     resTree_EntryRef_t resEntry
 );
@@ -747,7 +759,7 @@ io_DataType_t resTree_GetDefaultDataType
  * @return the default value, or NULL if not set.
  */
 //--------------------------------------------------------------------------------------------------
-dataSample_Ref_t resTree_GetDefaultValue
+LE_SHARED dataSample_Ref_t resTree_GetDefaultValue
 (
     resTree_EntryRef_t resEntry
 );
@@ -860,6 +872,28 @@ void resTree_SetRelevance
  */
 //--------------------------------------------------------------------------------------------------
 bool resTree_IsRelevant
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the node's clear newness flag
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetClearNewnessFlag
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "clear newness" flag.
+ *
+ * @return Whether the node "newness" flag must be cleared at the end of current snapshot
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsNewnessClearRequired
 (
     resTree_EntryRef_t resEntry ///< Resource to query.
 );
@@ -990,6 +1024,30 @@ dataSample_Ref_t resTree_FindBufferedSampleAfter
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Get the resource's "JSON example changed" flag.
+ *
+ * @return whether the resource's JSON example was updated after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED bool resTree_IsJsonExampleChanged
+(
+    resTree_EntryRef_t resEntry ///< Resource to poll
+);
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a resource's JSON example as not changed.
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED void resTree_ClearJsonExampleChanged
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+);
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the JSON example value for a given resource.
  */
 //--------------------------------------------------------------------------------------------------
@@ -1007,7 +1065,7 @@ void resTree_SetJsonExample
  * @return A reference to the example value or NULL if no example set.
  */
 //--------------------------------------------------------------------------------------------------
-dataSample_Ref_t resTree_GetJsonExample
+LE_SHARED dataSample_Ref_t resTree_GetJsonExample
 (
     resTree_EntryRef_t resEntry
 );
