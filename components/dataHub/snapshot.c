@@ -11,6 +11,14 @@
 
 #include "dataHub.h"
 #include "jsonFormatter.h"
+#ifdef WITH_OCTAVE
+#include "octaveFormatter.h"
+#endif
+
+#ifdef LE_DEBUG
+#undef LE_DEBUG
+#endif
+#define LE_DEBUG LE_INFO
 
 /// Upper limit on the number of passes through the tree that can be requested by a formatter.
 #define MAX_PASSES      10
@@ -123,6 +131,23 @@ resTree_EntryRef_t snapshot_GetNode
     LE_ASSERT(IsRunning);
     LE_ASSERT(Snapshot.nodeRef != NULL);
     return Snapshot.nodeRef;
+}
+
+//--------------------------------------------------------------------------------------------------
+/*
+ *  Obtain the resource tree node used as root for snapshot.
+ *
+ *  @return Node reference.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t snapshot_GetRoot
+(
+    void
+)
+{
+    LE_ASSERT(IsRunning);
+    LE_ASSERT(Snapshot.rootRef != NULL);
+    return Snapshot.rootRef;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -284,7 +309,7 @@ static void NodeEnd
     if (resTree_IsRelevant(Snapshot.nodeRef))
     {
         Snapshot.formatter->endNode(Snapshot.formatter);
-        resTree_ClearNewness(Snapshot.nodeRef);
+        resTree_SetClearNewnessFlag(Snapshot.nodeRef);
     }
     else
     {
@@ -374,13 +399,18 @@ static void UpdateRelevance
     {
         relevant = true;
     }
-    else if (filter & (SNAPSHOT_FILTER_CREATED | SNAPSHOT_FILTER_NORMAL))
+    else if ((filter & (SNAPSHOT_FILTER_NORMAL)) &&
+             !resTree_IsNew(nodeRef) && !resTree_IsDeleted(nodeRef))
     {
         timely = snapshot_IsTimely(nodeRef);
         relevant = timely;
     }
-    LE_DEBUG("Node %s is %srelevant on its own merit",
-        resTree_GetEntryName(nodeRef), (relevant ? "" : "ir"));
+
+    if (relevant)
+    {
+        LE_DEBUG("Node '%s' is relevant", resTree_GetEntryName(nodeRef));
+    }
+    resTree_SetRelevance(nodeRef, relevant);
 
     // Regardless of this node's timeliness, it is considered relevant if at least one child node is
     // relevant, in order to provide a "here to there" path.
@@ -391,13 +421,43 @@ static void UpdateRelevance
         childRef = resTree_GetNextSiblingEx(childRef, true);
     }
 
-    LE_DEBUG("Node %s is cumulatively %srelevant",
-        resTree_GetEntryName(nodeRef), (relevant ? "" : "ir"));
-    resTree_SetRelevance(nodeRef, relevant);
+    if (!resTree_IsRelevant(nodeRef) && relevant)
+    {
+        LE_DEBUG("Node %s is cumulatively relevant", resTree_GetEntryName(nodeRef));
+        resTree_SetRelevance(nodeRef, relevant);
+    }
 
+    if (!resTree_IsRelevant(nodeRef))
+    {
+        LE_DEBUG("Node '%s' is irrelevant", resTree_GetEntryName(nodeRef));
+    }
     // Timeliness implies relevance, but the reverse is not true.  Ensure that this condition is
     // met.
     LE_ASSERT(!(timely && !relevant));
+}
+
+//--------------------------------------------------------------------------------------------------
+/*
+ * Clear the newness flag from tree nodes
+ */
+//--------------------------------------------------------------------------------------------------
+static void ClearNewness
+(
+    resTree_EntryRef_t nodeRef ///< Node reference.
+)
+{
+    resTree_EntryRef_t  childRef = resTree_GetFirstChildEx(nodeRef, true);
+    if (resTree_IsNewnessClearRequired(nodeRef))
+    {
+        resTree_ClearNewness(nodeRef);
+    }
+
+    // Proceed with child/siblings
+    while (childRef != NULL)
+    {
+        ClearNewness(childRef);
+        childRef = resTree_GetNextSiblingEx(childRef, true);
+    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -483,7 +543,9 @@ void snapshot_Step
 #endif /* end LE_DEBUG_ENABLED */
 
     LE_ASSERT(Snapshot.nextState >= STATE_NODE_BEGIN && Snapshot.nextState < STATE_MAX);
+#if LE_DEBUG_ENABLED
     LE_DEBUG("Snapshot transition: -> %s", stepNames[Snapshot.nextState]);
+#endif /* end LE_DEBUG_ENABLED */
     le_event_QueueFunction(steps[Snapshot.nextState], NULL, NULL);
 }
 
@@ -556,12 +618,10 @@ void snapshot_End
     if (Snapshot.sink >= 0)
     {
         le_fd_Close(Snapshot.sink);
-    }
-    if (Snapshot.source >= 0)
-    {
-        le_fd_Close(Snapshot.source);
+        Snapshot.sink = -1;
     }
 
+    ClearNewness(Snapshot.rootRef);
     // Resume resource tree updates.
     resTree_EndUpdate();
     IsRunning = false;
@@ -635,6 +695,7 @@ void query_TakeSnapshot
     *snapshotStream = -1;
     if (IsRunning)
     {
+        LE_INFO("Snapshot already running");
         // Already running, so indicate we are busy.
         status = LE_BUSY;
         le_event_QueueFunction(&InvokeResultCallback, (void *) (uintptr_t) status, NULL);
@@ -651,6 +712,7 @@ void query_TakeSnapshot
     InitPipe();
     if (Snapshot.sink < 0 || Snapshot.source < 0)
     {
+        LE_ERROR("Failed to open pipe (sink: %d, source: %d)", Snapshot.sink, Snapshot.source);
         status = LE_CLOSED;
         goto end;
     }
@@ -662,15 +724,20 @@ void query_TakeSnapshot
         case QUERY_SNAPSHOT_FORMAT_JSON:
             status = GetJsonSnapshotFormatter(flags, Snapshot.sink, &Snapshot.formatter);
             break;
-        // case QUERY_SNAPSHOT_FORMAT_OCTAVE:
-        //     status = GetOctaveSnapshotFormatter(flags, Snapshot.sink, &Snapshot.formatter);
-        //     break;
+#ifdef WITH_OCTAVE
+        case QUERY_SNAPSHOT_FORMAT_OCTAVE:
+            status = GetOctaveSnapshotFormatter(flags, Snapshot.sink, &Snapshot.formatter);
+            break;
+#endif
         default:
             status = LE_NOT_IMPLEMENTED;
             break;
     }
-    if (Snapshot.formatter == NULL)
+    if (LE_OK != status)
     {
+        // Close the source here because the client will not do it
+        le_fd_Close(Snapshot.source);
+        Snapshot.source = -1;
         goto end;
     }
 
@@ -700,6 +767,7 @@ void query_TakeSnapshot
 end:
     if (status != LE_OK)
     {
+        LE_ERROR("Failed to start snapshot with error: %s", LE_RESULT_TXT(status));
         // End the snapshot request and unlock the tree if it is locked.
         snapshot_End(status);
     }

@@ -21,6 +21,8 @@ executables:
 {
     hubd = ( components/dataHub )
     dhub = ( components/adminTool )
+    // Datahub snapshot test tool
+//    dsnap = ( test/snapshot )
 }
 
 processes:
@@ -51,4 +53,6 @@ bindings:
     dhub.adminTool.query -> hubd.dataHub.query
     dhub.adminTool.io -> hubd.dataHub.io
     hubd.dataHub.le_appInfo -> <root>.le_appInfo
+    // Datahub snapshot test tool
+//    dsnap.snapshot.query -> hubd.dataHub.query
 }
