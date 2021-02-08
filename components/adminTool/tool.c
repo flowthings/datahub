@@ -200,7 +200,7 @@ static void HandleHelpRequest
         "            attached to it.\n"
         "\n"
         "    dhub push PATH [[--json] VALUE]\n"
-        "            Pushes a VALUE to the the resource at PATH. If VALUE is omitted,\n"
+        "            Pushes a VALUE to the resource at PATH. If VALUE is omitted,\n"
         "            a trigger is pushed.  If VALUE is specified, --json (or -j) can\n"
         "            optionally be used to specify that the VALUE should be pushed as\n"
         "            JSON; otherwise the type will be inferred (i.e., 'true' and\n"
@@ -208,7 +208,7 @@ static void HandleHelpRequest
         "            and everything else is treated as a string.\n"
         "\n"
         "    dhub push PATH --file FILE_PATH\n"
-        "            Pushes a content of FILE_PATH to the the resource at PATH as JSON\n"
+        "            Pushes content of FILE_PATH to the resource at PATH as a JSON.\n"
         "\n"
         "    dhub watch [--json] PATH\n"
         "           Register for notification of updates to a resource at PATH.\n"
@@ -1341,7 +1341,7 @@ static void SetDefault
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Push data to aressource using a file
+ * Push value of the resource using a local file
  */
 //--------------------------------------------------------------------------------------------------
 static void PushFile
@@ -1360,7 +1360,7 @@ static void PushFile
 
     if (ValueArg == NULL)
     {
-        fprintf(stderr, "Missing FILE argument.\n");
+        fprintf(stderr, "Missing FILE_PATH argument.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -1891,8 +1891,8 @@ static void CommandArgHandler
     {
         Action = ACTION_PUSH;
 
-        // Expect a path argument and optional --json (-j) flag.
-        // Or --file (-f) flag
+        // Expect a path argument and  optional : 
+        // --json (-j) or --file (-f) flag 
         le_arg_AddPositionalCallback(PathArgHandler);
         le_arg_SetFlagVar(&UseJsonFormat, "j", "json");
         le_arg_SetFlagVar(&UseFileFormat, "f", "file");
