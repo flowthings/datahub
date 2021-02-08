@@ -23,11 +23,13 @@ requires:
     component:
     {
         ../json
+        ../file
     }
 }
 
 cflags:
 {
     -I$CURDIR/../json
+    -I$CURDIR/../file
     -std=c99
 }

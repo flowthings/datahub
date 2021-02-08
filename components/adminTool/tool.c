@@ -9,6 +9,7 @@
 
 #include "interfaces.h"
 #include "json.h"
+#include "fileUtils.h"
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -65,6 +66,11 @@ Object;
 //--------------------------------------------------------------------------------------------------
 static bool UseJsonFormat = false;
 
+/**
+ * Flag indicating whether or not the data intput should be a FILE.
+ */
+//--------------------------------------------------------------------------------------------------
+static bool UseFileFormat = false;
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -96,6 +102,7 @@ static void HandleHelpRequest
         "    dhub set jsonExtraction PATH\n"
         "    dhub remove OBJECT PATH\n"
         "    dhub push PATH [[--json] VALUE]\n"
+        "    dhub push PATH --file FILE_PATH\n"
         "    dhub watch [--json] PATH\n"
         "    dhub get OBJECT PATH [START]\n"
         "    dhub read PATH [START]\n"
@@ -200,6 +207,9 @@ static void HandleHelpRequest
         "            'false' are treated as Boolean, numbers are treated as numerical,\n"
         "            and everything else is treated as a string.\n"
         "\n"
+        "    dhub push PATH --file FILE_PATH\n"
+        "            Pushes a content of FILE_PATH to the the resource at PATH as JSON\n"
+        "\n"
         "    dhub watch [--json] PATH\n"
         "           Register for notification of updates to a resource at PATH.\n"
         "           Print each update to stdout.  If --json specified, print as\n"
@@ -296,6 +306,12 @@ static const char* ValueArg = NULL;
 //--------------------------------------------------------------------------------------------------
 static double StartArg = NAN;  // Not-a-number by default
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Buffer to store the content of FILE_PATH
+ */
+//--------------------------------------------------------------------------------------------------
+static char DataFileBuffer[IO_MAX_STRING_VALUE_LEN] = {0};
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1325,6 +1341,54 @@ static void SetDefault
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Push data to aressource using a file
+ */
+//--------------------------------------------------------------------------------------------------
+static void PushFile
+(
+    void
+)
+//--------------------------------------------------------------------------------------------------
+{
+    le_result_t result=LE_FAULT;
+
+    if (PathArg == NULL)
+    {
+        fprintf(stderr, "Missing PATH argument.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (ValueArg == NULL)
+    {
+        fprintf(stderr, "Missing FILE argument.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    result = FileReadAll(ValueArg, DataFileBuffer, IO_MAX_STRING_VALUE_LEN);
+    if (result == LE_OVERFLOW)
+    {
+        fprintf(stderr, "Error: '%s' too big to be loaded\n", ValueArg);
+        exit(EXIT_FAILURE);
+    }
+    else if (result == LE_NOT_FOUND)
+    {
+        fprintf(stderr, "Error: '%s' file not found\n", ValueArg);
+        exit(EXIT_FAILURE);
+    }
+    else if (result != LE_OK)
+    {
+        fprintf(stderr, "Error: '%s' unrecognized error\n", ValueArg);
+        exit(EXIT_FAILURE);
+    }
+    else
+    {
+        admin_PushJson(PathArg, 0, DataFileBuffer); 
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the default value of a resource.
  */
 //--------------------------------------------------------------------------------------------------
@@ -1356,6 +1420,10 @@ static void Push
     else if (strcmp("false", ValueArg) == 0)
     {
         admin_PushBoolean(PathArg, IO_NOW, false);
+    }
+    else if (UseFileFormat)
+    {
+       PushFile();
     }
     else
     {
@@ -1824,8 +1892,10 @@ static void CommandArgHandler
         Action = ACTION_PUSH;
 
         // Expect a path argument and optional --json (-j) flag.
+        // Or --file (-f) flag
         le_arg_AddPositionalCallback(PathArgHandler);
         le_arg_SetFlagVar(&UseJsonFormat, "j", "json");
+        le_arg_SetFlagVar(&UseFileFormat, "f", "file");
     }
     else if (strcmp(arg, "remove") == 0)
     {
