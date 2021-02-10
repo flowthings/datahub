@@ -280,7 +280,7 @@ le_result_t FileReadAll
     {
         if (bufSize < fileSize)
         {
-            LE_ERROR("Insufficient buffer size %u < %u", bufSize, fileSize);
+            LE_ERROR("Insufficient buffer size %zd < %zd", bufSize, fileSize);
             result = LE_OVERFLOW;
         }
         else
