@@ -308,13 +308,6 @@ static double StartArg = NAN;  // Not-a-number by default
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Buffer to store the content of FILE_PATH
- */
-//--------------------------------------------------------------------------------------------------
-static char DataFileBuffer[IO_MAX_STRING_VALUE_LEN] = {0};
-
-//--------------------------------------------------------------------------------------------------
-/**
  * Handles a failure to connect an IPC session with the Data Hub by reporting an error to stderr
  * and exiting with EXIT_FAILURE.
  */
@@ -1351,6 +1344,7 @@ static void PushFile
 //--------------------------------------------------------------------------------------------------
 {
     le_result_t result=LE_FAULT;
+    char DataFileBuffer[IO_MAX_STRING_VALUE_LEN];
 
     if (PathArg == NULL)
     {
@@ -1364,7 +1358,7 @@ static void PushFile
         exit(EXIT_FAILURE);
     }
 
-    result = FileReadAll(ValueArg, DataFileBuffer, IO_MAX_STRING_VALUE_LEN);
+    result = fileUtils_ReadAll(ValueArg, DataFileBuffer, IO_MAX_STRING_VALUE_LEN);
     if (result == LE_OVERFLOW)
     {
         fprintf(stderr, "Error: '%s' too big to be loaded\n", ValueArg);
