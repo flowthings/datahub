@@ -12,7 +12,7 @@
 #include "resource.h"
 #include "resTree.h"
 #include "adminService.h"
-
+#include "snapshot.h"
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -28,7 +28,12 @@ typedef struct resTree_Entry
     char name[HUB_MAX_ENTRY_NAME_BYTES]; ///< Name of the entry.
     le_dls_List_t childList;  ///< List of child entries.
     admin_EntryType_t type; ///< The type of entry.
-    res_Resource_t* resourcePtr;    ///< Ptr to the Resource object or NULL if just a Namespace.
+
+    union
+    {
+        res_Resource_t  *resourcePtr;   ///< Ptr to the Resource object.
+        uint32_t         flags;         ///< Flags if this is just a namespace.
+    } u;
 }
 Entry_t;
 
@@ -49,38 +54,48 @@ static le_mem_PoolRef_t EntryPool = NULL;
 //--------------------------------------------------------------------------------------------------
 static Entry_t* AddChild
 (
-    Entry_t* parentPtr, ///< Ptr to the parent entry (NULL if creating the Root).
-    const char* name    ///< Name of the new child ("" if creating the Root).
+    Entry_t     *parentPtr, ///< Ptr to the parent entry (NULL if creating the Root).
+    const char  *name,      ///< Name of the new child ("" if creating the Root).
+    Entry_t     *entryPtr   ///< If non-NULL, resurrect an existing namespace node as the child,
+                            ///< rather than creating a new one.
 )
 //--------------------------------------------------------------------------------------------------
 {
-    Entry_t* entryPtr = le_mem_ForceAlloc(EntryPool);
-
-    entryPtr->link = LE_DLS_LINK_INIT;
-
-    if (LE_OK != le_utf8_Copy(entryPtr->name, name, sizeof(entryPtr->name), NULL))
+    if (entryPtr == NULL)
     {
-        LE_ERROR("Resource tree entry name longer than %zu bytes max. Truncated to '%s'.",
-                 sizeof(entryPtr->name),
-                 name);
+        entryPtr = le_mem_Alloc(EntryPool);
+
+        if (LE_OK != le_utf8_Copy(entryPtr->name, name, sizeof(entryPtr->name), NULL))
+        {
+            LE_ERROR("Resource tree entry name longer than %zu bytes max. Truncated to '%s'.",
+                     sizeof(entryPtr->name),
+                     name);
+        }
+
+        entryPtr->link = LE_DLS_LINK_INIT;
+        entryPtr->childList = LE_DLS_LIST_INIT;
+        entryPtr->type = ADMIN_ENTRY_TYPE_NAMESPACE;
+
+        if (parentPtr != NULL)
+        {
+            LE_ASSERT(resTree_FindChildEx(parentPtr, name, true) == NULL);
+
+            // Increment the reference count on the parent.
+            le_mem_AddRef(parentPtr);
+
+            // Link to the parent entry.
+            entryPtr->parentPtr = parentPtr;
+            le_dls_Queue(&parentPtr->childList, &entryPtr->link);
+        }
+    }
+    else
+    {
+        LE_ASSERT(entryPtr->type == ADMIN_ENTRY_TYPE_NAMESPACE);
+        LE_ASSERT(entryPtr->parentPtr == parentPtr);
+        LE_ASSERT(le_dls_IsEmpty(&entryPtr->childList));
     }
 
-    entryPtr->childList = LE_DLS_LIST_INIT;
-    entryPtr->type = ADMIN_ENTRY_TYPE_NAMESPACE;
-    entryPtr->resourcePtr = NULL;
-
-    if (parentPtr != NULL)
-    {
-        LE_ASSERT(resTree_FindChild(parentPtr, name) == NULL);
-
-        // Increment the reference count on the parent.
-        le_mem_AddRef(parentPtr);
-
-        // Link to the parent entry.
-        entryPtr->parentPtr = parentPtr;
-        le_dls_Queue(&parentPtr->childList, &entryPtr->link);
-    }
-
+    entryPtr->u.flags = RES_FLAG_NEW;
     return entryPtr;
 }
 
@@ -100,7 +115,6 @@ static void EntryDestructor
 
     LE_ASSERT(entryPtr->parentPtr != NULL);
     LE_ASSERT(le_dls_IsEmpty(&entryPtr->childList));
-    LE_ASSERT(entryPtr->resourcePtr == NULL);
 
     // Remove from parent's list of children.
     le_dls_Remove(&entryPtr->parentPtr->childList, &entryPtr->link);
@@ -128,7 +142,7 @@ void resTree_Init
     le_mem_SetDestructor(EntryPool, EntryDestructor);
 
     // Create the Root Namespace.
-    RootPtr = AddChild(NULL, "");
+    RootPtr = AddChild(NULL, "", NULL);
 }
 
 
@@ -145,7 +159,14 @@ bool resTree_IsResource
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return (entryRef->resourcePtr != NULL);
+    if (entryRef->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        return false;
+    }
+    else
+    {
+        return (entryRef->u.resourcePtr != NULL);
+    }
 }
 
 
@@ -165,6 +186,41 @@ resTree_EntryRef_t resTree_GetRoot
     return RootPtr;
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Find a child entry with a given name, optionally including already deleted nodes if they have not
+ * been flushed.
+ *
+ * @return Reference to the object or NULL if not found.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_FindChildEx
+(
+    resTree_EntryRef_t   nsRef,         ///< Namespace entry to search.
+    const char          *name,          ///< Name of the child entry.
+    bool                 withZombies    ///< If the child has been deleted but is still around,
+                                        ///< return it.
+)
+{
+    le_dls_Link_t* linkPtr = le_dls_Peek(&nsRef->childList);
+
+    while (linkPtr != NULL)
+    {
+        Entry_t* childPtr = CONTAINER_OF(linkPtr, Entry_t, link);
+
+        if (withZombies || !resTree_IsDeleted(childPtr))
+        {
+            if (strncmp(name, childPtr->name, sizeof(childPtr->name)) == 0)
+            {
+                return childPtr;
+            }
+        }
+
+        linkPtr = le_dls_PeekNext(&nsRef->childList, linkPtr);
+    }
+
+    return NULL;
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -180,21 +236,7 @@ resTree_EntryRef_t resTree_FindChild
 )
 //--------------------------------------------------------------------------------------------------
 {
-    le_dls_Link_t* linkPtr = le_dls_Peek(&nsRef->childList);
-
-    while (linkPtr != NULL)
-    {
-        Entry_t* childPtr = CONTAINER_OF(linkPtr, Entry_t, link);
-
-        if (strcmp(name, childPtr->name) == 0)
-        {
-            return childPtr;
-        }
-
-        linkPtr = le_dls_PeekNext(&nsRef->childList, linkPtr);
-    }
-
-    return NULL;
+    return resTree_FindChildEx(nsRef, name, false);
 }
 
 
@@ -263,15 +305,15 @@ static resTree_EntryRef_t GoToEntry
 
         // Look up the entry name in the list of children of the current entry.
         // If found, this becomes the new current entry.
-        Entry_t* childPtr = resTree_FindChild(currentEntry, entryName);
+        Entry_t* childPtr = resTree_FindChildEx(currentEntry, entryName, true);
 
-        if (childPtr == NULL)
+        if (childPtr == NULL || resTree_IsDeleted(childPtr))
         {
             // If we're supposed to create a missing entry, create one now.
             // Otherwise, return NULL.
             if (doCreate)
             {
-                childPtr = AddChild(currentEntry, entryName);
+                childPtr = AddChild(currentEntry, entryName, childPtr);
             }
             else
             {
@@ -305,18 +347,21 @@ static void ReplaceResource
 //--------------------------------------------------------------------------------------------------
 {
     // If we're replacing an existing Resource with another type, move Resource settings over.
-    if (entryRef->resourcePtr != NULL)
+    if (entryRef->type != ADMIN_ENTRY_TYPE_NAMESPACE)
     {
-        // Note that this may result in lost settings. For example, Placeholders don't have
-        // filter settings, but Observations do, so moving settings from an Observation to a
-        // Placeholder will lose the Observation's filter settings.
-        res_MoveAdminSettings(entryRef->resourcePtr, replacementPtr, replacementType);
+        if (entryRef->u.resourcePtr != NULL)
+        {
+            // Note that this may result in lost settings. For example, Placeholders don't have
+            // filter settings, but Observations do, so moving settings from an Observation to a
+            // Placeholder will lose the Observation's filter settings.
+            res_MoveAdminSettings(entryRef->u.resourcePtr, replacementPtr, replacementType);
 
-        // Delete the original resource.
-        le_mem_Release(entryRef->resourcePtr);
+            // Delete the original resource.
+            le_mem_Release(entryRef->u.resourcePtr);
+        }
     }
 
-    entryRef->resourcePtr = replacementPtr;
+    entryRef->u.resourcePtr = replacementPtr;
     entryRef->type = replacementType;
 }
 
@@ -431,7 +476,7 @@ const char* resTree_GetUnits
 {
     LE_ASSERT(resTree_IsResource(resRef));
 
-    return res_GetUnits(resRef->resourcePtr);
+    return res_GetUnits(resRef->u.resourcePtr);
 }
 
 
@@ -453,7 +498,7 @@ io_DataType_t resTree_GetDataType
 {
     LE_ASSERT(resTree_IsResource(resRef));
 
-    return res_GetDataType(resRef->resourcePtr);
+    return res_GetDataType(resRef->u.resourcePtr);
 }
 
 
@@ -819,6 +864,50 @@ ssize_t resTree_GetPath
     return bytesWritten;
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the parent of a given entry.
+ *
+ * @return Reference to the parent entry, or NULL if the entry has no parent (root).
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_GetParent
+(
+    resTree_EntryRef_t entryRef ///< Node to get the parent of.
+)
+{
+    return entryRef->parentPtr;
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the first child of a given entry, optionally including already deleted nodes if they have not
+ * been flushed.
+ *
+ * @return Reference to the first child entry, or NULL if the entry has no children.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_GetFirstChildEx
+(
+    resTree_EntryRef_t  entryRef,   ///< Node to get the child of.
+    bool                withZombies ///< If the child has been deleted but is still around, return
+                                    ///< it.
+)
+{
+    le_dls_Link_t       *linkPtr = le_dls_Peek(&entryRef->childList);
+    resTree_EntryRef_t   childPtr;
+
+    if (linkPtr != NULL)
+    {
+        childPtr = CONTAINER_OF(linkPtr, Entry_t, link);
+        if (withZombies || !resTree_IsDeleted(childPtr))
+        {
+            return childPtr;
+        }
+    }
+
+    return NULL;
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -833,16 +922,45 @@ resTree_EntryRef_t resTree_GetFirstChild
 )
 //--------------------------------------------------------------------------------------------------
 {
-    le_dls_Link_t* linkPtr = le_dls_Peek(&entryRef->childList);
+    return resTree_GetFirstChildEx(entryRef, false);
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the next sibling (child of the same parent) of a given entry, optionally including already
+ * deleted nodes if they have not been flushed.
+ *
+ * @return Reference to the next entry in the parent's child list, or
+ *         NULL if already at the last child.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_GetNextSiblingEx
+(
+    resTree_EntryRef_t  entryRef,   ///< Node to get the sibling of.
+    bool                withZombies ///< If the sibling has been deleted but is still around, return
+                                    ///< it.
+)
+{
+    if (entryRef->parentPtr == NULL)
+    {
+        // Someone called this function for the Root entry.
+        return NULL;
+    }
+
+    le_dls_Link_t       *linkPtr = le_dls_PeekNext(&entryRef->parentPtr->childList, &entryRef->link);
+    resTree_EntryRef_t   childPtr;
 
     if (linkPtr != NULL)
     {
-        return CONTAINER_OF(linkPtr, Entry_t, link);
+        childPtr = CONTAINER_OF(linkPtr, Entry_t, link);
+        if (withZombies || !resTree_IsDeleted(childPtr))
+        {
+            return childPtr;
+        }
     }
 
     return NULL;
 }
-
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -858,20 +976,7 @@ resTree_EntryRef_t resTree_GetNextSibling
 )
 //--------------------------------------------------------------------------------------------------
 {
-    if (entryRef->parentPtr == NULL)
-    {
-        // Someone called this function for the Root entry.
-        return NULL;
-    }
-
-    le_dls_Link_t* linkPtr = le_dls_PeekNext(&entryRef->parentPtr->childList, &entryRef->link);
-
-    if (linkPtr != NULL)
-    {
-        return CONTAINER_OF(linkPtr, Entry_t, link);
-    }
-
-    return NULL;
+    return resTree_GetNextSiblingEx(entryRef, false);
 }
 
 
@@ -897,7 +1002,7 @@ void resTree_Push
         case ADMIN_ENTRY_TYPE_OBSERVATION:
         case ADMIN_ENTRY_TYPE_PLACEHOLDER:
 
-            res_Push(entryRef->resourcePtr, dataType, NULL, dataSample);
+            res_Push(entryRef->u.resourcePtr, dataType, NULL, dataSample);
             break;
 
         case ADMIN_ENTRY_TYPE_NAMESPACE:
@@ -930,7 +1035,7 @@ hub_HandlerRef_t resTree_AddPushHandler
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_AddPushHandler(resRef->resourcePtr,
+    return res_AddPushHandler(resRef->u.resourcePtr,
                               dataType,
                               callbackPtr,
                               contextPtr);
@@ -955,7 +1060,7 @@ dataSample_Ref_t resTree_GetCurrentValue
         return NULL;
     }
 
-    return res_GetCurrentValue(resRef->resourcePtr);
+    return res_GetCurrentValue(resRef->u.resourcePtr);
 }
 
 
@@ -980,7 +1085,8 @@ le_result_t resTree_SetSource
     LE_ASSERT(destEntry->type != ADMIN_ENTRY_TYPE_NAMESPACE);
     LE_ASSERT(destEntry->type != ADMIN_ENTRY_TYPE_NONE);
 
-    return res_SetSource(destEntry->resourcePtr, (srcEntry != NULL ? srcEntry->resourcePtr : NULL));
+    return res_SetSource(destEntry->u.resourcePtr,
+        (srcEntry != NULL ? srcEntry->u.resourcePtr : NULL));
 }
 
 
@@ -1000,7 +1106,7 @@ resTree_EntryRef_t resTree_GetSource
 {
     if (resTree_IsResource(destEntry))
     {
-        return res_GetSource(destEntry->resourcePtr);
+        return res_GetSource(destEntry->u.resourcePtr);
     }
 
     return NULL;
@@ -1020,7 +1126,7 @@ void resTree_DeleteIO
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_Resource_t* ioPtr = entryRef->resourcePtr;
+    res_Resource_t* ioPtr = entryRef->u.resourcePtr;
 
     // Call handlers before we release the Resource memory, or re-assign it to
     // become a placeholder. Replacing with a placeholder is still considered a "remove"
@@ -1038,14 +1144,16 @@ void resTree_DeleteIO
     else
     {
         // Detach the IO resource from the resource tree entry (converting it into a namespace).
-        entryRef->resourcePtr = NULL;
+        entryRef->u.flags = 0;
         entryRef->type = ADMIN_ENTRY_TYPE_NAMESPACE;
 
         // Release the IO resource.
         le_mem_Release(ioPtr);
 
+        // Record the deletion.
+        snapshot_RecordNodeDeletion(entryRef);
+
         // Release the resource tree entry.
-        // This will cause it to be removed from the resource tree.
         le_mem_Release(entryRef);
     }
 }
@@ -1065,14 +1173,16 @@ void resTree_DeleteObservation
     CallResourceTreeChangeHandlers(obsEntry, ADMIN_ENTRY_TYPE_OBSERVATION, ADMIN_RESOURCE_REMOVED);
 
     // Delete the Observation resource object.
-    res_DeleteObservation(obsEntry->resourcePtr);
+    res_DeleteObservation(obsEntry->u.resourcePtr);
 
     // Convert the resource tree entry into a namespace, detaching the Observation resource from it.
-    obsEntry->resourcePtr = NULL;
+    obsEntry->u.flags = 0;
     obsEntry->type = ADMIN_ENTRY_TYPE_NAMESPACE;
 
-    // Release the namespace (resource tree entry).  This will cause it to be removed from the
-    // resource tree.
+    // Record the deletion.
+    snapshot_RecordNodeDeletion(obsEntry);
+
+    // Release the namespace (resource tree entry).
     le_mem_Release(obsEntry);
 }
 
@@ -1091,7 +1201,7 @@ void resTree_SetMinPeriod
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetMinPeriod(obsEntry->resourcePtr, minPeriod);
+    res_SetMinPeriod(obsEntry->u.resourcePtr, minPeriod);
 }
 
 
@@ -1108,7 +1218,7 @@ double resTree_GetMinPeriod
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetMinPeriod(obsEntry->resourcePtr);
+    return res_GetMinPeriod(obsEntry->u.resourcePtr);
 }
 
 
@@ -1126,7 +1236,7 @@ void resTree_SetHighLimit
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetHighLimit(obsEntry->resourcePtr, highLimit);
+    res_SetHighLimit(obsEntry->u.resourcePtr, highLimit);
 }
 
 
@@ -1143,7 +1253,7 @@ double resTree_GetHighLimit
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetHighLimit(obsEntry->resourcePtr);
+    return res_GetHighLimit(obsEntry->u.resourcePtr);
 }
 
 
@@ -1161,7 +1271,7 @@ void resTree_SetLowLimit
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetLowLimit(obsEntry->resourcePtr, lowLimit);
+    res_SetLowLimit(obsEntry->u.resourcePtr, lowLimit);
 }
 
 
@@ -1178,7 +1288,7 @@ double resTree_GetLowLimit
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetLowLimit(obsEntry->resourcePtr);
+    return res_GetLowLimit(obsEntry->u.resourcePtr);
 }
 
 
@@ -1199,7 +1309,7 @@ void resTree_SetChangeBy
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetChangeBy(obsEntry->resourcePtr, change);
+    res_SetChangeBy(obsEntry->u.resourcePtr, change);
 }
 
 
@@ -1217,7 +1327,7 @@ double resTree_GetChangeBy
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetChangeBy(obsEntry->resourcePtr);
+    return res_GetChangeBy(obsEntry->u.resourcePtr);
 }
 
 
@@ -1238,7 +1348,7 @@ void resTree_SetTransform
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetTransform(obsEntry->resourcePtr, transformType, paramsPtr, paramsSize);
+    res_SetTransform(obsEntry->u.resourcePtr, transformType, paramsPtr, paramsSize);
 }
 
 
@@ -1255,7 +1365,7 @@ admin_TransformType_t resTree_GetTransform
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetTransform(obsEntry->resourcePtr);
+    return res_GetTransform(obsEntry->u.resourcePtr);
 }
 
 
@@ -1272,7 +1382,7 @@ void resTree_SetBufferMaxCount
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetBufferMaxCount(obsEntry->resourcePtr, count);
+    res_SetBufferMaxCount(obsEntry->u.resourcePtr, count);
 }
 
 
@@ -1289,7 +1399,7 @@ uint32_t resTree_GetBufferMaxCount
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetBufferMaxCount(obsEntry->resourcePtr);
+    return res_GetBufferMaxCount(obsEntry->u.resourcePtr);
 }
 
 
@@ -1308,7 +1418,7 @@ void resTree_SetBufferBackupPeriod
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetBufferBackupPeriod(obsEntry->resourcePtr, seconds);
+    res_SetBufferBackupPeriod(obsEntry->u.resourcePtr, seconds);
 }
 
 
@@ -1327,7 +1437,7 @@ uint32_t resTree_GetBufferBackupPeriod
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetBufferBackupPeriod(obsEntry->resourcePtr);
+    return res_GetBufferBackupPeriod(obsEntry->u.resourcePtr);
 }
 
 
@@ -1342,7 +1452,7 @@ void resTree_MarkOptional
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_MarkOptional(resEntry->resourcePtr);
+    res_MarkOptional(resEntry->u.resourcePtr);
 }
 
 
@@ -1366,7 +1476,7 @@ bool resTree_IsMandatory
     }
     else
     {
-        return res_IsMandatory(resEntry->resourcePtr);
+        return res_IsMandatory(resEntry->u.resourcePtr);
     }
 }
 
@@ -1387,7 +1497,7 @@ void resTree_SetDefault
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetDefault(resEntry->resourcePtr, dataType, value);
+    res_SetDefault(resEntry->u.resourcePtr, dataType, value);
 }
 
 
@@ -1404,7 +1514,7 @@ bool resTree_HasDefault
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_HasDefault(resEntry->resourcePtr);
+    return res_HasDefault(resEntry->u.resourcePtr);
 }
 
 
@@ -1421,7 +1531,7 @@ io_DataType_t resTree_GetDefaultDataType
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetDefaultDataType(resEntry->resourcePtr);
+    return res_GetDefaultDataType(resEntry->u.resourcePtr);
 }
 
 
@@ -1438,7 +1548,7 @@ dataSample_Ref_t resTree_GetDefaultValue
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetDefaultValue(resEntry->resourcePtr);
+    return res_GetDefaultValue(resEntry->u.resourcePtr);
 }
 
 
@@ -1453,7 +1563,7 @@ void resTree_RemoveDefault
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_RemoveDefault(resEntry->resourcePtr);
+    return res_RemoveDefault(resEntry->u.resourcePtr);
 }
 
 
@@ -1473,7 +1583,7 @@ void resTree_SetOverride
 )
 //--------------------------------------------------------------------------------------------------
 {
-    res_SetOverride(resEntry->resourcePtr, dataType, value);
+    res_SetOverride(resEntry->u.resourcePtr, dataType, value);
 }
 
 
@@ -1490,7 +1600,7 @@ bool resTree_HasOverride
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_HasOverride(resEntry->resourcePtr);
+    return res_HasOverride(resEntry->u.resourcePtr);
 }
 
 
@@ -1507,7 +1617,7 @@ io_DataType_t resTree_GetOverrideDataType
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetOverrideDataType(resEntry->resourcePtr);
+    return res_GetOverrideDataType(resEntry->u.resourcePtr);
 }
 
 
@@ -1524,7 +1634,7 @@ dataSample_Ref_t resTree_GetOverrideValue
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_GetOverrideValue(resEntry->resourcePtr);
+    return res_GetOverrideValue(resEntry->u.resourcePtr);
 }
 
 
@@ -1539,9 +1649,215 @@ void resTree_RemoveOverride
 )
 //--------------------------------------------------------------------------------------------------
 {
-    return res_RemoveOverride(resEntry->resourcePtr);
+    return res_RemoveOverride(resEntry->u.resourcePtr);
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the last modified time stamp of a resource.
+ *
+ * @return Time stamp value, in seconds since the Epoch, or -1 if no time stamp value exists.
+ */
+//--------------------------------------------------------------------------------------------------
+double resTree_GetLastModified
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+)
+{
+    dataSample_Ref_t value;
+
+    if (resEntry->type != ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        value = resTree_GetCurrentValue(resEntry);
+        if (value != NULL)
+        {
+            return dataSample_GetTimestamp(value);
+        }
+    }
+
+    return -1;
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the node's relevance flag.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetRelevance
+(
+    resTree_EntryRef_t  resEntry,   ///< Resource to query.
+    bool                relevant    ///< Relevance of node to current operation.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        if (relevant)
+        {
+            resEntry->u.flags |= RES_FLAG_RELEVANT;
+        }
+        else
+        {
+            resEntry->u.flags &= ~RES_FLAG_RELEVANT;
+        }
+    }
+    else
+    {
+        res_SetRelevance(resEntry->u.resourcePtr, relevant);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's relevance flag.
+ *
+ * @return Relevance of node to the current operation.
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsRelevant
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        return (resEntry->u.flags & RES_FLAG_RELEVANT);
+    }
+    else
+    {
+        return res_IsRelevant(resEntry->u.resourcePtr);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the node's clear newness flag
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetClearNewnessFlag
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        resEntry->u.flags |= RES_FLAG_CLEAR_NEW;
+    }
+    else
+    {
+        res_SetClearNewnessFlag(resEntry->u.resourcePtr);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "clear newness" flag.
+ *
+ * @return Whether the node "newness" flag must be cleared at the end of current snapshot
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsNewnessClearRequired
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        return (resEntry->u.flags & RES_FLAG_CLEAR_NEW);
+    }
+    else
+    {
+        return res_IsNewnessClearRequired(resEntry->u.resourcePtr);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a node as no longer "new."  New nodes are those that were created after the last snapshot
+ * scan of the tree.
+ * Also remove the "clear newness" flag.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_ClearNewness
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        resEntry->u.flags &= ~RES_FLAG_NEW;
+        resEntry->u.flags &= ~RES_FLAG_CLEAR_NEW;
+    }
+    else
+    {
+        res_ClearNewness(resEntry->u.resourcePtr);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "newness" flag.
+ *
+ * @return Whether the node was created after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsNew
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        return (resEntry->u.flags & RES_FLAG_NEW);
+    }
+    else
+    {
+        return res_IsNew(resEntry->u.resourcePtr);
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a node as deleted.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetDeleted
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+)
+{
+    // The deleted flag should only be set on nodes which have already been converted to namespaces
+    // as part of the deletion cleanup process.
+    LE_ASSERT(resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE);
+    // The deletion flag should not be set on nodes which have not been scanned yet, as there is no
+    // point in keeping them around as a deletion record.
+    LE_ASSERT((resEntry->u.flags & RES_FLAG_NEW) == 0);
+
+    resEntry->u.flags |= RES_FLAG_DELETED;
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "deleted" flag.
+ *
+ * @return Whether the node was deleted after the last flush.
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsDeleted
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+)
+{
+    if (resEntry->type == ADMIN_ENTRY_TYPE_NAMESPACE)
+    {
+        return (resEntry->u.flags & RES_FLAG_DELETED);
+    }
+    else
+    {
+        // All deleted nodes are converted to namespaces during the deletion process, so if it is
+        // not a namespace, it can't be considered deleted.
+        return false;
+    }
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1597,9 +1913,9 @@ static void ForEachResourceUnder
     {
         Entry_t* childPtr = CONTAINER_OF(linkPtr, Entry_t, link);
 
-        if (childPtr->resourcePtr != NULL)
+        if (childPtr->type != ADMIN_ENTRY_TYPE_NAMESPACE && childPtr->u.resourcePtr != NULL)
         {
-            func(childPtr->resourcePtr, childPtr->type);
+            func(childPtr->u.resourcePtr, childPtr->type);
         }
 
         ForEachResourceUnder(childPtr, func);
@@ -1648,10 +1964,10 @@ void resTree_ReadBufferJson
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(obsEntry->resourcePtr != NULL);
     LE_ASSERT(obsEntry->type == ADMIN_ENTRY_TYPE_OBSERVATION);
+    LE_ASSERT(obsEntry->u.resourcePtr != NULL);
 
-    res_ReadBufferJson(obsEntry->resourcePtr, startAfter, outputFile, handlerPtr, contextPtr);
+    res_ReadBufferJson(obsEntry->u.resourcePtr, startAfter, outputFile, handlerPtr, contextPtr);
 }
 
 
@@ -1672,10 +1988,46 @@ dataSample_Ref_t resTree_FindBufferedSampleAfter
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(obsEntry->resourcePtr != NULL);
     LE_ASSERT(obsEntry->type == ADMIN_ENTRY_TYPE_OBSERVATION);
+    LE_ASSERT(obsEntry->u.resourcePtr != NULL);
 
-    return res_FindBufferedSampleAfter(obsEntry->resourcePtr, startAfter);
+    return res_FindBufferedSampleAfter(obsEntry->u.resourcePtr, startAfter);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the resource's "JSON example changed" flag.
+ *
+ * @return whether the resource's JSON example was updated after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsJsonExampleChanged
+(
+    resTree_EntryRef_t resEntry ///< Resource to poll
+)
+{
+    LE_ASSERT(resEntry->type != ADMIN_ENTRY_TYPE_NAMESPACE);
+    LE_ASSERT(resEntry->u.resourcePtr != NULL);
+
+    return res_IsJsonExampleChanged(resEntry->u.resourcePtr);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a resource's JSON example as not changed.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_ClearJsonExampleChanged
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+)
+{
+    LE_ASSERT(resEntry->type != ADMIN_ENTRY_TYPE_NAMESPACE);
+    LE_ASSERT(resEntry->u.resourcePtr != NULL);
+
+    res_ClearJsonExampleChanged(resEntry->u.resourcePtr);
 }
 
 
@@ -1691,9 +2043,10 @@ void resTree_SetJsonExample
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(resEntry->resourcePtr != NULL);
+    LE_ASSERT(resEntry->type != ADMIN_ENTRY_TYPE_NAMESPACE);
+    LE_ASSERT(resEntry->u.resourcePtr != NULL);
 
-    res_SetJsonExample(resEntry->resourcePtr, example);
+    res_SetJsonExample(resEntry->u.resourcePtr, example);
 }
 
 
@@ -1710,9 +2063,10 @@ dataSample_Ref_t resTree_GetJsonExample
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(resEntry->resourcePtr != NULL);
+    LE_ASSERT(resEntry->type != ADMIN_ENTRY_TYPE_NAMESPACE);
+    LE_ASSERT(resEntry->u.resourcePtr != NULL);
 
-    return res_GetJsonExample(resEntry->resourcePtr);
+    return res_GetJsonExample(resEntry->u.resourcePtr);
 }
 
 
@@ -1732,7 +2086,6 @@ void resTree_SetJsonExtraction
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(resEntry->resourcePtr != NULL);
 
     if (resEntry->type != ADMIN_ENTRY_TYPE_OBSERVATION)
     {
@@ -1740,7 +2093,8 @@ void resTree_SetJsonExtraction
     }
     else
     {
-        res_SetJsonExtraction(resEntry->resourcePtr, extractionSpec);
+        LE_ASSERT(resEntry->u.resourcePtr != NULL);
+        res_SetJsonExtraction(resEntry->u.resourcePtr, extractionSpec);
     }
 }
 
@@ -1759,15 +2113,14 @@ const char* resTree_GetJsonExtraction
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(resEntry->resourcePtr != NULL);
-
     if (resEntry->type != ADMIN_ENTRY_TYPE_OBSERVATION)
     {
         LE_DEBUG("Not an observation (actually a %s).", hub_GetEntryTypeName(resEntry->type));
         return "";
     }
 
-    return res_GetJsonExtraction(resEntry->resourcePtr);
+    LE_ASSERT(resEntry->u.resourcePtr != NULL);
+    return res_GetJsonExtraction(resEntry->u.resourcePtr);
 }
 
 
@@ -1787,14 +2140,13 @@ double resTree_QueryMin
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(obsEntry->resourcePtr != NULL);
-
     if (obsEntry->type != ADMIN_ENTRY_TYPE_OBSERVATION)
     {
         return NAN;
     }
 
-    return res_QueryMin(obsEntry->resourcePtr, startTime);
+    LE_ASSERT(obsEntry->u.resourcePtr != NULL);
+    return res_QueryMin(obsEntry->u.resourcePtr, startTime);
 }
 
 
@@ -1814,14 +2166,13 @@ double resTree_QueryMax
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(obsEntry->resourcePtr != NULL);
-
     if (obsEntry->type != ADMIN_ENTRY_TYPE_OBSERVATION)
     {
         return NAN;
     }
 
-    return res_QueryMax(obsEntry->resourcePtr, startTime);
+    LE_ASSERT(obsEntry->u.resourcePtr != NULL);
+    return res_QueryMax(obsEntry->u.resourcePtr, startTime);
 }
 
 
@@ -1841,14 +2192,13 @@ double resTree_QueryMean
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(obsEntry->resourcePtr != NULL);
-
     if (obsEntry->type != ADMIN_ENTRY_TYPE_OBSERVATION)
     {
         return NAN;
     }
 
-    return res_QueryMean(obsEntry->resourcePtr, startTime);
+    LE_ASSERT(obsEntry->u.resourcePtr != NULL);
+    return res_QueryMean(obsEntry->u.resourcePtr, startTime);
 }
 
 
@@ -1869,13 +2219,11 @@ double resTree_QueryStdDev
 )
 //--------------------------------------------------------------------------------------------------
 {
-    LE_ASSERT(obsEntry->resourcePtr != NULL);
-
     if (obsEntry->type != ADMIN_ENTRY_TYPE_OBSERVATION)
     {
         return NAN;
     }
 
-    return res_QueryStdDev(obsEntry->resourcePtr, startTime);
+    LE_ASSERT(obsEntry->u.resourcePtr != NULL);
+    return res_QueryStdDev(obsEntry->u.resourcePtr, startTime);
 }
-

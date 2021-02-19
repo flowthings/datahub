@@ -131,7 +131,7 @@ void res_Construct
     resPtr->overrideType = IO_DATA_TYPE_TRIGGER;
     resPtr->defaultValue = NULL;
     resPtr->defaultType = IO_DATA_TYPE_TRIGGER;
-    resPtr->isConfigChanging = false;
+    resPtr->flags = RES_FLAG_NEW;
     resPtr->pushHandlerList = LE_DLS_LIST_INIT;
     resPtr->jsonExample = NULL;
 }
@@ -427,8 +427,8 @@ le_result_t res_SetSource
         // should be suspended until the update finishes.
         if (IsUpdateInProgress)
         {
-            srcPtr->isConfigChanging = true;
-            destPtr->isConfigChanging = true;
+            srcPtr->flags |= RES_FLAG_CHANGING_CONFIG;
+            destPtr->flags |= RES_FLAG_CHANGING_CONFIG;
         }
     }
     // If the source is being set to a NULL source (removing the source) and the resource is
@@ -603,7 +603,7 @@ void res_Push
 
     // If the resource is undergoing a change to its routing or filtering configuration,
     // then acceptance of new samples is suspended until the configuration change is done.
-    if (resPtr->isConfigChanging)
+    if (resPtr->flags & RES_FLAG_CHANGING_CONFIG)
     {
         LE_WARN("Rejecting pushed value because configuration update is in progress.");
         le_mem_Release(dataSample);
@@ -815,8 +815,8 @@ void res_MoveAdminSettings
     destPtr->defaultValue = srcPtr->defaultValue;
     srcPtr->defaultValue = NULL;
 
-    // Move the isConfigChanging flag.
-    destPtr->isConfigChanging = srcPtr->isConfigChanging;
+    // Move the flags.
+    destPtr->flags = srcPtr->flags;
 
     // Move the push handler list.
     handler_MoveAll(&destPtr->pushHandlerList, &srcPtr->pushHandlerList);
@@ -918,7 +918,7 @@ void res_SetMinPeriod
 
     if (IsUpdateInProgress)
     {
-        resPtr->isConfigChanging = true;
+        resPtr->flags |= RES_FLAG_CHANGING_CONFIG;
     }
 }
 
@@ -958,7 +958,7 @@ void res_SetHighLimit
 
     if (IsUpdateInProgress)
     {
-        resPtr->isConfigChanging = true;
+        resPtr->flags |= RES_FLAG_CHANGING_CONFIG;
     }
 }
 
@@ -998,7 +998,7 @@ void res_SetLowLimit
 
     if (IsUpdateInProgress)
     {
-        resPtr->isConfigChanging = true;
+        resPtr->flags |= RES_FLAG_CHANGING_CONFIG;
     }
 }
 
@@ -1041,7 +1041,7 @@ void res_SetChangeBy
 
     if (IsUpdateInProgress)
     {
-        resPtr->isConfigChanging = true;
+        resPtr->flags |= RES_FLAG_CHANGING_CONFIG;
     }
 }
 
@@ -1085,7 +1085,7 @@ void res_SetTransform
 
     if (IsUpdateInProgress)
     {
-        resPtr->isConfigChanging = true;
+        resPtr->flags |= RES_FLAG_CHANGING_CONFIG;
     }
 }
 
@@ -1483,6 +1483,99 @@ void res_RemoveOverride
     }
 }
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the resource's relevance flag.
+ */
+//--------------------------------------------------------------------------------------------------
+void res_SetRelevance
+(
+    res_Resource_t  *resPtr,    ///< Resource to query.
+    bool             relevant   ///< Relevance of resource to current operation.
+)
+{
+    if (relevant)
+    {
+        resPtr->flags |= RES_FLAG_RELEVANT;
+    }
+    else
+    {
+        resPtr->flags &= ~RES_FLAG_RELEVANT;
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the resource's relevance flag.
+ *
+ * @return Relevance of resource to the current operation.
+ */
+//--------------------------------------------------------------------------------------------------
+bool res_IsRelevant
+(
+    res_Resource_t *resPtr ///< Resource to query.
+)
+{
+    return (resPtr->flags & RES_FLAG_RELEVANT);
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the resource's clear newness flag
+ */
+//--------------------------------------------------------------------------------------------------
+void res_SetClearNewnessFlag
+(
+    res_Resource_t  *resPtr ///< Resource to query.
+)
+{
+    resPtr->flags |= RES_FLAG_CLEAR_NEW;
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the resource's "clear newness" flag.
+ *
+ * @return Whether the resource "newness" flag must be cleared at the end of current snapshot
+ */
+//--------------------------------------------------------------------------------------------------
+bool res_IsNewnessClearRequired
+(
+    res_Resource_t  *resPtr ///< Resource to query.
+)
+{
+    return (resPtr->flags & RES_FLAG_CLEAR_NEW);
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a resource as no longer "new."  "New" resources are those that were created after the last
+ * snapshot scan of the tree.
+ */
+//--------------------------------------------------------------------------------------------------
+void res_ClearNewness
+(
+    res_Resource_t *resPtr ///< Resource to query.
+)
+{
+    resPtr->flags &= ~RES_FLAG_NEW;
+    resPtr->flags &= ~RES_FLAG_CLEAR_NEW;
+}
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the resource's "newness" flag.
+ *
+ * @return Whether the resource was created after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+bool res_IsNew
+(
+    res_Resource_t *resPtr ///< Resource to query.
+)
+{
+    return (resPtr->flags & RES_FLAG_NEW);
+}
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1506,7 +1599,7 @@ void res_StartUpdate
 
 //--------------------------------------------------------------------------------------------------
 /**
- * Clear the isConfigChanging flag on a given resource.
+ * Clear the config changing flag on a given resource.
  */
 //--------------------------------------------------------------------------------------------------
 static void ClearConfigChangingFlag
@@ -1516,7 +1609,8 @@ static void ClearConfigChangingFlag
 )
 //--------------------------------------------------------------------------------------------------
 {
-    resPtr->isConfigChanging = false;
+    LE_UNUSED(entryType);
+    resPtr->flags &= ~RES_FLAG_CHANGING_CONFIG;
 }
 
 
@@ -1590,6 +1684,36 @@ dataSample_Ref_t res_FindBufferedSampleAfter
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Get the resource's "JSON example changed" flag.
+ *
+ * @return whether the resource's JSON example was updated after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+bool res_IsJsonExampleChanged
+(
+    res_Resource_t* resPtr
+)
+{
+    return (resPtr->flags & RES_FLAG_JSON_EX_CHANGED);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a resource's JSON example as not changed.
+ */
+//--------------------------------------------------------------------------------------------------
+void res_ClearJsonExampleChanged
+(
+    res_Resource_t *resPtr ///< Resource to update.
+)
+{
+    resPtr->flags &= ~RES_FLAG_JSON_EX_CHANGED;
+}
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the JSON example value for a given resource.
  */
 //--------------------------------------------------------------------------------------------------
@@ -1606,6 +1730,7 @@ void res_SetJsonExample
     }
 
     resPtr->jsonExample = example;
+    resPtr->flags |= RES_FLAG_JSON_EX_CHANGED;
 
     // Iterate over the list of destination routes, setting their JSON example values.
     le_dls_Link_t* linkPtr = le_dls_Peek(&(resPtr->destList));

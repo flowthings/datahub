@@ -56,7 +56,7 @@ void resTree_Init
  * @return Reference to the object.
  */
 //--------------------------------------------------------------------------------------------------
-resTree_EntryRef_t resTree_GetRoot
+LE_SHARED resTree_EntryRef_t resTree_GetRoot
 (
     void
 );
@@ -74,6 +74,21 @@ bool resTree_IsResource
     resTree_EntryRef_t entryRef
 );
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Find a child entry with a given name, optionally including already deleted nodes if they have not
+ * been flushed.
+ *
+ * @return Reference to the object or NULL if not found.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_FindChildEx
+(
+    resTree_EntryRef_t   nsRef,         ///< Namespace entry to search.
+    const char          *name,          ///< Name of the child entry.
+    bool                 withZombies    ///< If the child has been deleted but is still around,
+                                        ///< return it.
+);
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -123,7 +138,7 @@ resTree_EntryRef_t resTree_FindEntryAtAbsolutePath
  * @return Ptr to the name. Only valid while the entry exists.
  */
 //--------------------------------------------------------------------------------------------------
-const char* resTree_GetEntryName
+LE_SHARED const char *resTree_GetEntryName
 (
     resTree_EntryRef_t entryRef
 );
@@ -136,7 +151,7 @@ const char* resTree_GetEntryName
  * @return The entry type.
  */
 //--------------------------------------------------------------------------------------------------
-admin_EntryType_t resTree_GetEntryType
+LE_SHARED admin_EntryType_t resTree_GetEntryType
 (
     resTree_EntryRef_t entryRef
 );
@@ -165,7 +180,7 @@ const char* resTree_GetUnits
  * @return the data type.
  */
 //--------------------------------------------------------------------------------------------------
-io_DataType_t resTree_GetDataType
+LE_SHARED io_DataType_t resTree_GetDataType
 (
     resTree_EntryRef_t resRef
 );
@@ -285,7 +300,7 @@ resTree_EntryRef_t resTree_GetObservation
  *  - LE_NOT_FOUND if the resource is not in the given namespace.
  */
 //--------------------------------------------------------------------------------------------------
-ssize_t resTree_GetPath
+LE_SHARED ssize_t resTree_GetPath
 (
     char* stringBuffPtr,  ///< Ptr to where the path should be written.
     size_t stringBuffSize,  ///< Size of the string buffer, in bytes.
@@ -293,6 +308,32 @@ ssize_t resTree_GetPath
     resTree_EntryRef_t entryRef
 );
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the parent of a given entry.
+ *
+ * @return Reference to the parent entry, or NULL if the entry has no parent (root).
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED resTree_EntryRef_t resTree_GetParent
+(
+    resTree_EntryRef_t entryRef ///< Node to get the parent of.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the first child of a given entry, optionally including already deleted nodes if they have not
+ * been flushed.
+ *
+ * @return Reference to the first child entry, or NULL if the entry has no children.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_GetFirstChildEx
+(
+    resTree_EntryRef_t  entryRef,   ///< Node to get the child of.
+    bool                withZombies ///< If the child has been deleted but is still around, return
+                                    ///< it.
+);
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -301,11 +342,26 @@ ssize_t resTree_GetPath
  * @return Reference to the first child entry, or NULL if the entry has no children.
  */
 //--------------------------------------------------------------------------------------------------
-resTree_EntryRef_t resTree_GetFirstChild
+LE_SHARED resTree_EntryRef_t resTree_GetFirstChild
 (
     resTree_EntryRef_t entryRef
 );
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the next sibling (child of the same parent) of a given entry, optionally including already
+ * deleted nodes if they have not been flushed.
+ *
+ * @return Reference to the next entry in the parent's child list, or
+ *         NULL if already at the last child.
+ */
+//--------------------------------------------------------------------------------------------------
+resTree_EntryRef_t resTree_GetNextSiblingEx
+(
+    resTree_EntryRef_t  entryRef,   ///< Node to get the sibling of.
+    bool                withZombies ///< If the sibling has been deleted but is still around, return
+                                    ///< it.
+);
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -317,7 +373,7 @@ resTree_EntryRef_t resTree_GetFirstChild
  * @warning Do not call this for the Root Entry.
  */
 //--------------------------------------------------------------------------------------------------
-resTree_EntryRef_t resTree_GetNextSibling
+LE_SHARED resTree_EntryRef_t resTree_GetNextSibling
 (
     resTree_EntryRef_t entryRef
 );
@@ -363,7 +419,7 @@ hub_HandlerRef_t resTree_AddPushHandler
  * @return Reference to the Data Sample object or NULL if the resource doesn't have a current value.
  */
 //--------------------------------------------------------------------------------------------------
-dataSample_Ref_t resTree_GetCurrentValue
+LE_SHARED dataSample_Ref_t resTree_GetCurrentValue
 (
     resTree_EntryRef_t resRef
 );
@@ -648,7 +704,7 @@ void resTree_MarkOptional
  * @return true if a mandatory output, false if it's an optional output or not an output at all.
  */
 //--------------------------------------------------------------------------------------------------
-bool resTree_IsMandatory
+LE_SHARED bool resTree_IsMandatory
 (
     resTree_EntryRef_t resEntry
 );
@@ -677,7 +733,7 @@ void resTree_SetDefault
  * @return true if there is a default value set, false if not.
  */
 //--------------------------------------------------------------------------------------------------
-bool resTree_HasDefault
+LE_SHARED bool resTree_HasDefault
 (
     resTree_EntryRef_t resEntry
 );
@@ -690,7 +746,7 @@ bool resTree_HasDefault
  * @return The data type, or IO_DATA_TYPE_TRIGGER if not set.
  */
 //--------------------------------------------------------------------------------------------------
-io_DataType_t resTree_GetDefaultDataType
+LE_SHARED io_DataType_t resTree_GetDefaultDataType
 (
     resTree_EntryRef_t resEntry
 );
@@ -703,7 +759,7 @@ io_DataType_t resTree_GetDefaultDataType
  * @return the default value, or NULL if not set.
  */
 //--------------------------------------------------------------------------------------------------
-dataSample_Ref_t resTree_GetDefaultValue
+LE_SHARED dataSample_Ref_t resTree_GetDefaultValue
 (
     resTree_EntryRef_t resEntry
 );
@@ -785,6 +841,107 @@ void resTree_RemoveOverride
     resTree_EntryRef_t resEntry
 );
 
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the last modified time stamp of a resource.
+ *
+ * @return Time stamp value, in seconds since the Epoch.
+ */
+//--------------------------------------------------------------------------------------------------
+double resTree_GetLastModified
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the node's relevance flag.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetRelevance
+(
+    resTree_EntryRef_t  resEntry,   ///< Resource to query.
+    bool                relevant    ///< Relevance of node to current operation.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's relevance flag.
+ *
+ * @return Relevance of node to the current operation.
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsRelevant
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Set the node's clear newness flag
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetClearNewnessFlag
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "clear newness" flag.
+ *
+ * @return Whether the node "newness" flag must be cleared at the end of current snapshot
+ */
+//--------------------------------------------------------------------------------------------------
+bool resTree_IsNewnessClearRequired
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a node as no longer "new."  New nodes are those that were created after the last snapshot
+ * scan of the tree.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_ClearNewness
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "newness" flag.
+ *
+ * @return Whether the node was created after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED bool resTree_IsNew
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a node as deleted.
+ */
+//--------------------------------------------------------------------------------------------------
+void resTree_SetDeleted
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+);
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Get the node's "deleted" flag.
+ *
+ * @return Whether the node was deleted after the last flush.
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED bool resTree_IsDeleted
+(
+    resTree_EntryRef_t resEntry ///< Resource to query.
+);
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -867,6 +1024,30 @@ dataSample_Ref_t resTree_FindBufferedSampleAfter
 
 //--------------------------------------------------------------------------------------------------
 /**
+ * Get the resource's "JSON example changed" flag.
+ *
+ * @return whether the resource's JSON example was updated after the last scan.
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED bool resTree_IsJsonExampleChanged
+(
+    resTree_EntryRef_t resEntry ///< Resource to poll
+);
+
+
+//--------------------------------------------------------------------------------------------------
+/**
+ * Mark a resource's JSON example as not changed.
+ */
+//--------------------------------------------------------------------------------------------------
+LE_SHARED void resTree_ClearJsonExampleChanged
+(
+    resTree_EntryRef_t resEntry ///< Resource to update.
+);
+
+
+//--------------------------------------------------------------------------------------------------
+/**
  * Set the JSON example value for a given resource.
  */
 //--------------------------------------------------------------------------------------------------
@@ -884,7 +1065,7 @@ void resTree_SetJsonExample
  * @return A reference to the example value or NULL if no example set.
  */
 //--------------------------------------------------------------------------------------------------
-dataSample_Ref_t resTree_GetJsonExample
+LE_SHARED dataSample_Ref_t resTree_GetJsonExample
 (
     resTree_EntryRef_t resEntry
 );
@@ -983,6 +1164,5 @@ double resTree_QueryStdDev
     resTree_EntryRef_t obsEntry,    ///< Observation entry.
     double startTime    ///< If < 30 years then seconds before now; else seconds since the Epoch.
 );
-
 
 #endif // NAMESPACE_H_INCLUDE_GUARD

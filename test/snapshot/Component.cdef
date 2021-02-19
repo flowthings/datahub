@@ -1,0 +1,19 @@
+requires:
+{
+    api:
+    {
+        query.api [manual-start]
+    }
+}
+
+sources:
+{
+    snapshotTool.c
+}
+
+cflags:
+{
+#if ${MK_CONFIG_ENABLE_OCTAVE} = y
+    -DWITH_OCTAVE
+#endif
+}
