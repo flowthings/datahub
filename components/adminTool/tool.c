@@ -9,7 +9,6 @@
 
 #include "interfaces.h"
 #include "json.h"
-#include "fileUtils.h"
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -102,7 +101,7 @@ static void HandleHelpRequest
         "    dhub set jsonExtraction PATH\n"
         "    dhub remove OBJECT PATH\n"
         "    dhub push PATH [[--json] VALUE]\n"
-        "    dhub push PATH --file FILE_PATH\n"
+        "    dhub push PATH --file [--json] FILE_PATH\n"
         "    dhub watch [--json] PATH\n"
         "    dhub get OBJECT PATH [START]\n"
         "    dhub read PATH [START]\n"
@@ -207,8 +206,10 @@ static void HandleHelpRequest
         "            'false' are treated as Boolean, numbers are treated as numerical,\n"
         "            and everything else is treated as a string.\n"
         "\n"
-        "    dhub push PATH --file FILE_PATH\n"
-        "            Pushes content of FILE_PATH to the resource at PATH as a JSON.\n"
+        "    dhub push PATH --file [--json] FILE_PATH\n"
+        "            Pushes content of FILE_PATH to the resource at PATH, --json (or -j)\n"
+        "            can optionally be used to specify that the file should be pushed\n"
+        "            as JSON; otherwise the file will treated as a string.\n"
         "\n"
         "    dhub watch [--json] PATH\n"
         "           Register for notification of updates to a resource at PATH.\n"
@@ -305,6 +306,7 @@ static const char* ValueArg = NULL;
  */
 //--------------------------------------------------------------------------------------------------
 static double StartArg = NAN;  // Not-a-number by default
+
 
 //--------------------------------------------------------------------------------------------------
 /**
@@ -1343,14 +1345,9 @@ static void PushFile
 )
 //--------------------------------------------------------------------------------------------------
 {
-    le_result_t result=LE_FAULT;
-    char DataFileBuffer[IO_MAX_STRING_VALUE_LEN];
-
-    if (PathArg == NULL)
-    {
-        fprintf(stderr, "Missing PATH argument.\n");
-        exit(EXIT_FAILURE);
-    }
+    le_result_t result = LE_FAULT;
+    char dataFileBuffer[IO_MAX_STRING_VALUE_LEN];
+    size_t fileSize;
 
     if (ValueArg == NULL)
     {
@@ -1358,25 +1355,50 @@ static void PushFile
         exit(EXIT_FAILURE);
     }
 
-    result = fileUtils_ReadAll(ValueArg, DataFileBuffer, IO_MAX_STRING_VALUE_LEN);
-    if (result == LE_OVERFLOW)
+    result = le_fs_GetSize(ValueArg, &fileSize);
+    if (LE_OK == result)
     {
-        fprintf(stderr, "Error: '%s' too big to be loaded\n", ValueArg);
-        exit(EXIT_FAILURE);
-    }
-    else if (result == LE_NOT_FOUND)
-    {
-        fprintf(stderr, "Error: '%s' file not found\n", ValueArg);
-        exit(EXIT_FAILURE);
-    }
-    else if (result != LE_OK)
-    {
-        fprintf(stderr, "Error: '%s' unrecognized error\n", ValueArg);
-        exit(EXIT_FAILURE);
+        if (IO_MAX_STRING_VALUE_LEN < fileSize)
+        {
+            result = LE_OVERFLOW;
+            fprintf(stderr, "Error '%s' too big to be loaded\n", ValueArg);
+            exit(EXIT_FAILURE);
+        }
+        else
+        {
+            le_fs_FileRef_t fileRef;
+            result = le_fs_Open(ValueArg, LE_FS_RDONLY, &fileRef);
+            if (LE_OK == result)
+            {
+                result = le_fs_Read(fileRef, (uint8_t *)dataFileBuffer, &fileSize);
+                if (LE_OK != result)
+                {
+                    fprintf(stderr, "Error reading file %s (%s)\n", ValueArg, LE_RESULT_TXT(result));
+                    exit(EXIT_FAILURE);
+                }
+
+                result = le_fs_Close(fileRef);
+                if (LE_OK != result)
+                {
+                    fprintf(stderr, "Error closing file %s (%s)\n", ValueArg, LE_RESULT_TXT(result));
+                    exit(EXIT_FAILURE);
+                }
+            }
+        }
     }
     else
     {
-        admin_PushJson(PathArg, 0, DataFileBuffer); 
+        fprintf(stderr, "Error failed to get file size %s (%s)\n", ValueArg, LE_RESULT_TXT(result));
+        exit(EXIT_FAILURE);
+    }
+
+    if (UseJsonFormat)
+    {
+        admin_PushJson(PathArg, IO_NOW, dataFileBuffer);
+    }
+    else
+    {
+        admin_PushString(PathArg, IO_NOW, dataFileBuffer);
     }
 }
 
@@ -1398,44 +1420,47 @@ static void Push
         exit(EXIT_FAILURE);
     }
 
-    // If no value was specified, push a trigger.
-    if (ValueArg == NULL)
+    if (UseFileFormat)
     {
-        admin_PushTrigger(PathArg, IO_NOW);
-    }
-    else if (UseJsonFormat)
-    {
-        admin_PushJson(PathArg, IO_NOW, ValueArg);
-    }
-    else if (strcmp("true", ValueArg) == 0)
-    {
-        admin_PushBoolean(PathArg, IO_NOW, true);
-    }
-    else if (strcmp("false", ValueArg) == 0)
-    {
-        admin_PushBoolean(PathArg, IO_NOW, false);
-    }
-    else if (UseFileFormat)
-    {
-       PushFile();
+        PushFile();
     }
     else
     {
-        // Try parsing as a number.
-        double number = ParseDouble(ValueArg);
-        if (errno == 0)
+        // If no value was specified, push a trigger.
+        if (ValueArg == NULL)
         {
-            admin_PushNumeric(PathArg, IO_NOW, number);
+            admin_PushTrigger(PathArg, IO_NOW);
         }
-        // If that didn't work, if it's valid JSON, push it as JSON.
-        else if (json_IsValid(ValueArg))
+        else if (UseJsonFormat)
         {
             admin_PushJson(PathArg, IO_NOW, ValueArg);
         }
-        // Otherwise, treat as a string.
+        else if (strcmp("true", ValueArg) == 0)
+        {
+            admin_PushBoolean(PathArg, IO_NOW, true);
+        }
+        else if (strcmp("false", ValueArg) == 0)
+        {
+            admin_PushBoolean(PathArg, IO_NOW, false);
+        }
         else
         {
-            admin_PushString(PathArg, IO_NOW, ValueArg);
+            // Try parsing as a number.
+            double number = ParseDouble(ValueArg);
+            if (errno == 0)
+            {
+                admin_PushNumeric(PathArg, IO_NOW, number);
+            }
+            // If that didn't work, if it's valid JSON, push it as JSON.
+            else if (json_IsValid(ValueArg))
+            {
+                admin_PushJson(PathArg, IO_NOW, ValueArg);
+            }
+            // Otherwise, treat as a string.
+            else
+            {
+                admin_PushString(PathArg, IO_NOW, ValueArg);
+            }
         }
     }
 }
@@ -1885,8 +1910,8 @@ static void CommandArgHandler
     {
         Action = ACTION_PUSH;
 
-        // Expect a path argument and  optional : 
-        // --json (-j) or --file (-f) flag 
+        // Expect a path argument and  optional :
+        // --json (-j) or --file (-f) flag
         le_arg_AddPositionalCallback(PathArgHandler);
         le_arg_SetFlagVar(&UseJsonFormat, "j", "json");
         le_arg_SetFlagVar(&UseFileFormat, "f", "file");
