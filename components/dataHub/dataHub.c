@@ -39,7 +39,11 @@
  * Component initializer.
  */
 //--------------------------------------------------------------------------------------------------
+#ifndef UNIT_TEST
 COMPONENT_INIT
+#else
+void initDataHub(void)
+#endif
 {
     dataSample_Init();
     handler_Init();
