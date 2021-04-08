@@ -2224,9 +2224,27 @@ void admin_EndUpdate
     res_EndUpdate();
 }
 
-static le_result_t ExtractAppNameFromAbsolutePath(const char* path, char* appName, size_t appNameSize)
+//--------------------------------------------------------------------------------------------------
+/**
+ * Extract the application name from an absolute path.
+ * eg. "/app/foo/sensor/value" => "foo"
+ *
+ * @return
+ *  - LE_OK if successful.
+ *  - LE_BAD_PARAMETER if the path is not absolute.
+ *  - LE_OVERFLOW if appName buffer is not large enough to contain the application name.
+ */
+//--------------------------------------------------------------------------------------------------
+static le_result_t ExtractAppNameFromAbsolutePath
+(
+    const char* path,
+        ///< [IN] Absolute resource tree path.
+    char* appName,
+        ///< [OUT] The extracted application name.
+    size_t appNameSize
+        ///< [IN] Size of the appName buffer.
+)
 {
-
     // Verify the path is absolute
     if (strncmp(path, "/app/", strlen("/app/")))
     {
@@ -2514,11 +2532,11 @@ void admin_MarkOptional
     resTree_EntryRef_t resRef = resTree_FindEntryAtAbsolutePath(path);
     if (resRef == NULL)
     {
-        LE_KILL_CLIENT("Attempt to mark non-existent resource optional at '%s'.", path);
+        LE_ERROR("Attempt to mark non-existent resource optional at '%s'.", path);
     }
     else if (resTree_GetEntryType(resRef) != ADMIN_ENTRY_TYPE_OUTPUT)
     {
-        LE_KILL_CLIENT("Attempt to mark non-Output resource optional at '%s'.", path);
+        LE_ERROR("Attempt to mark non-Output resource optional at '%s'.", path);
     }
     else
     {
